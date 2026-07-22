@@ -1,0 +1,14 @@
+streamlit>=1.36.0
+langchain>=0.2.11
+langgraph>=0.2.14
+langchain-google-genai>=1.0.8
+langchain-text-splitters>=0.2.2
+google-generativeai>=0.7.2
+google-genai>=1.0.0
+faiss-cpu>=1.8.0
+numpy>=1.26.4
+sentence-transformers>=3.0.1
+pypdf>=4.2.0
+pandas>=2.2.2
+python-dotenv>=1.0.1
+pytest>=8.2.2
