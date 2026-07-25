@@ -5,28 +5,28 @@ from product_support_agent.models import ConversationMessage
 from product_support_agent.services.query_contextualizer import QueryContextualizer
 
 
-class _FakeGeminiService:
+class _FakeLLMService:
     def __init__(self, *, rewrite_answer: str = "", error: Exception | None = None) -> None:
         self._rewrite_answer = rewrite_answer
         self._error = error
         self.calls: list[dict[str, object]] = []
 
-    def generate_text(
+    def contextualize_query(
         self,
         *,
         system_instruction: str,
-        user_content: str,
+        conversation_history: str,
+        current_query: str,
         temperature: float,
         max_output_tokens: int,
-        task_name: str,
     ) -> str:
         self.calls.append(
             {
                 "system_instruction": system_instruction,
-                "user_content": user_content,
+                "conversation_history": conversation_history,
+                "current_query": current_query,
                 "temperature": temperature,
                 "max_output_tokens": max_output_tokens,
-                "task_name": task_name,
             }
         )
         if self._error is not None:
@@ -35,12 +35,12 @@ class _FakeGeminiService:
 
 
 def test_query_contextualizer_keeps_standalone_query_valid(test_settings) -> None:
-    gemini_service = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         rewrite_answer="What is the duration of Advanced Coding Easy?"
     )
     contextualizer = QueryContextualizer(
         test_settings,
-        gemini_service=gemini_service,
+        llm_service=llm_service,
     )
     history = [
         ConversationMessage(
@@ -55,16 +55,16 @@ def test_query_contextualizer_keeps_standalone_query_valid(test_settings) -> Non
     )
 
     assert resolved_query == "What is the duration of Advanced Coding Easy?"
-    assert gemini_service.calls
+    assert llm_service.calls
 
 
 def test_query_contextualizer_resolves_follow_up_query_from_history(test_settings) -> None:
-    gemini_service = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         rewrite_answer="What comes after Advanced Coding Easy?"
     )
     contextualizer = QueryContextualizer(
         test_settings,
-        gemini_service=gemini_service,
+        llm_service=llm_service,
     )
     history = [
         ConversationMessage(
@@ -84,18 +84,18 @@ def test_query_contextualizer_resolves_follow_up_query_from_history(test_setting
     )
 
     assert resolved_query == "What comes after Advanced Coding Easy?"
-    assert "CURRENT USER QUESTION" in str(gemini_service.calls[0]["user_content"])
+    assert llm_service.calls[0]["current_query"] == "What comes after that?"
 
 
 def test_query_contextualizer_uses_original_query_when_history_is_empty(
     test_settings,
 ) -> None:
-    gemini_service = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         rewrite_answer="unused"
     )
     contextualizer = QueryContextualizer(
         test_settings,
-        gemini_service=gemini_service,
+        llm_service=llm_service,
     )
 
     resolved_query = contextualizer.resolve_query(
@@ -104,18 +104,18 @@ def test_query_contextualizer_uses_original_query_when_history_is_empty(
     )
 
     assert resolved_query == "What comes after that?"
-    assert not gemini_service.calls
+    assert not llm_service.calls
 
 
 def test_query_contextualizer_falls_back_to_original_query_on_failure(
     test_settings,
 ) -> None:
-    gemini_service = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         error=GenerationError("Contextualization failed.")
     )
     contextualizer = QueryContextualizer(
         test_settings,
-        gemini_service=gemini_service,
+        llm_service=llm_service,
     )
     history = [
         ConversationMessage(

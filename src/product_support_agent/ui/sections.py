@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections import Counter
+from datetime import datetime
+from time import perf_counter
+
 import streamlit as st
 
 from product_support_agent.config import Settings
@@ -9,13 +13,25 @@ from product_support_agent.services.indexing_pipeline import KnowledgeBaseIngest
 from product_support_agent.services.memory import ConversationMemoryService
 from product_support_agent.services.metadata_manager import MetadataManager
 from product_support_agent.services.rag_service import RAGService
-from product_support_agent.services.retriever import RetrieverService
 from product_support_agent.services.upload_manager import UploadManager
-from product_support_agent.utils import human_readable_size, utc_timestamp
+from product_support_agent.ui.presenter import (
+    LAST_RAG_RESPONSE_KEY,
+    append_chat_record,
+    clear_chat_transcript,
+    consume_clear_conversation_request,
+    get_chat_transcript,
+    get_search_depth,
+)
+from product_support_agent.ui.theme import (
+    build_simple_card,
+    render_card_grid,
+    render_conversation_turn,
+    render_message_bubble,
+)
+from product_support_agent.utils import human_readable_size
 
 
 _CHAT_SESSION_ID = "ask_knowledge_base"
-_LAST_RAG_RESPONSE_KEY = "last_rag_response"
 
 
 def _load_upload_manifest(settings: Settings) -> list[dict[str, object]]:
@@ -27,16 +43,15 @@ def _load_upload_manifest(settings: Settings) -> list[dict[str, object]]:
 
 
 def render_upload_section(settings: Settings) -> None:
-    st.subheader("Document Ingestion and Indexing")
-    st.write(
-        "Upload PDF, TXT, and CSV files, validate them, extract text, chunk content, "
-        "generate local embeddings, and persist the knowledge base into FAISS."
+    st.subheader("Add Knowledge")
+    st.caption(
+        "Upload your documents once so the assistant can search them and answer with grounded references."
     )
 
     upload_manager = UploadManager(settings)
     pipeline = KnowledgeBaseIngestionPipeline(settings)
     uploaded_files = st.file_uploader(
-        "Select source files",
+        "Choose files",
         type=[extension.lstrip(".") for extension in upload_manager.supported_extensions()],
         accept_multiple_files=True,
         help=(
@@ -46,15 +61,21 @@ def render_upload_section(settings: Settings) -> None:
     )
 
     if uploaded_files:
-        st.markdown("### Pending Uploads")
-        for uploaded_file in uploaded_files:
-            st.write(
-                f"- `{uploaded_file.name}` ({human_readable_size(uploaded_file.size)})"
-            )
+        st.markdown("### Ready to Add")
+        render_card_grid(
+            [
+                build_simple_card(
+                    title=f"{_pending_file_icon(uploaded_file.name)} {uploaded_file.name}",
+                    value=human_readable_size(uploaded_file.size),
+                    caption="Ready to process",
+                )
+                for uploaded_file in uploaded_files
+            ]
+        )
 
     if st.button("Build Knowledge Base", type="primary"):
         if not uploaded_files:
-            st.warning("Select at least one file before building the knowledge base.")
+            st.warning("Choose at least one file before updating the knowledge base.")
         else:
             payloads = [
                 UploadPayload(
@@ -63,123 +84,68 @@ def render_upload_section(settings: Settings) -> None:
                 )
                 for uploaded_file in uploaded_files
             ]
+            progress = st.progress(5)
+            stage = st.empty()
+            stage.caption("Checking your files...")
             try:
+                progress.progress(35)
+                stage.caption("Adding documents to the knowledge base...")
                 result = pipeline.ingest_uploads(payloads)
             except ProductSupportAgentError as exc:
+                progress.empty()
+                stage.empty()
                 st.error(str(exc))
             else:
+                progress.progress(100)
+                stage.caption("Knowledge base update complete.")
                 for duplicate_message in result.duplicate_messages:
                     st.info(duplicate_message)
-                st.success("Knowledge base created successfully.")
-                st.json(result.to_dict())
+                st.success("Your knowledge base is ready.")
+                render_card_grid(
+                    [
+                        build_simple_card(
+                            title="Uploaded Files",
+                            value=str(result.uploaded_files),
+                            caption="Added in this update",
+                        ),
+                        build_simple_card(
+                            title="Extracted Documents",
+                            value=str(result.extracted_documents),
+                            caption="Read successfully",
+                        ),
+                        build_simple_card(
+                            title="Chunks Created",
+                            value=str(result.chunks_created),
+                            caption="Prepared for search",
+                        ),
+                        build_simple_card(
+                            title="Vectors in Index",
+                            value=str(result.vectors_in_index),
+                            caption="Stored in the knowledge base",
+                        ),
+                    ],
+                    css_class="psa-source-grid",
+                )
 
     manifest = _load_upload_manifest(settings)
     if manifest:
-        st.markdown("### Uploaded File Manifest")
-        st.dataframe(
+        st.markdown("### Knowledge Base")
+        chunk_counts = _load_chunk_counts_by_file(settings)
+        render_card_grid(
             [
-                {
-                    "file_name": item["stored_file_name"],
-                    "document_type": item["document_metadata"]["document_type"],
-                    "file_size_bytes": item["file_size_bytes"],
-                    "stored_path": item["stored_path"],
-                    "checksum": item["document_metadata"]["checksum"],
-                }
+                build_simple_card(
+                    title=f"{_document_icon(item)} {str(item.get('stored_file_name', 'Unknown'))}",
+                    value=human_readable_size(int(item.get("file_size_bytes", 0))),
+                    caption=(
+                        f"Indexed | {chunk_counts.get(str(item.get('stored_file_name', '')), 0)} chunks"
+                    ),
+                )
                 for item in manifest
-            ],
-            use_container_width=True,
+            ]
         )
 
 
-def render_logs_section(settings: Settings) -> None:
-    st.subheader("Logs")
-    st.info(
-        "Application logging is enabled for upload, parsing, chunking, embeddings, "
-        "FAISS persistence, retrieval, grounded generation, and errors."
-    )
-    st.code(
-        "\n".join(
-            [
-                f"timestamp={utc_timestamp()}",
-                f"log_file={settings.logging.log_file}",
-                f"log_level={settings.logging.level}",
-                f"upload_manifest={settings.paths.upload_manifest_file}",
-                f"index_file={settings.paths.vector_index_file}",
-                f"metadata_file={settings.paths.vector_metadata_file}",
-                f"top_k_results={settings.app.top_k_results}",
-                f"max_query_length={settings.app.max_query_length}",
-                f"gemini_model={settings.app.gemini_model}",
-                f"contextualizer_temperature={settings.app.contextualizer_temperature}",
-                f"contextualizer_max_output_tokens={settings.app.contextualizer_max_output_tokens}",
-                f"rag_relevance_threshold={settings.app.rag_relevance_threshold}",
-                f"rag_context_expansion_chunks={settings.app.rag_context_expansion_chunks}",
-                f"memory_max_turns={settings.app.memory_max_turns}",
-                "status=phase7_langgraph_reasoning_ready",
-            ]
-        ),
-        language="text",
-    )
-
-
-def render_retrieval_section(settings: Settings) -> None:
-    st.subheader("Retrieved Context")
-    st.write(
-        "Use this temporary retrieval section to validate FAISS search quality against "
-        "the existing persistent knowledge base. No AI answer generation is performed here."
-    )
-
-    retriever = RetrieverService(settings)
-    query = st.text_input(
-        "User Query",
-        placeholder="Enter a question related to the indexed documents...",
-    )
-    top_k = st.number_input(
-        "Top-K Results",
-        min_value=1,
-        max_value=20,
-        value=settings.app.top_k_results,
-        step=1,
-    )
-
-    if st.button("Retrieve Context", type="primary"):
-        try:
-            response = retriever.retrieve(query=query, top_k=int(top_k))
-        except ProductSupportAgentError as exc:
-            st.error(str(exc))
-        else:
-            if not response.results:
-                st.warning("No retrieved context was returned from the FAISS index.")
-            else:
-                st.success(f"Retrieved {len(response.results)} chunk(s).")
-                for result in response.results:
-                    with st.container(border=True):
-                        st.markdown(f"**Source File:** `{result.source_file}`")
-                        st.markdown(f"**Chunk ID:** `{result.chunk_id}`")
-                        st.markdown(f"**Document Type:** `{result.document_type}`")
-                        st.markdown(f"**Similarity Score:** `{result.score:.6f}`")
-                        if result.page_number is not None:
-                            st.markdown(f"**Page Number:** `{result.page_number}`")
-                        if result.row_number is not None:
-                            st.markdown(f"**Row Number:** `{result.row_number}`")
-                        if result.chunk_number is not None:
-                            st.markdown(f"**Chunk Number:** `{result.chunk_number}`")
-                        st.markdown(f"**Source Path:** `{result.source_path}`")
-                        st.text_area(
-                            "Retrieved Chunk",
-                            value=result.content,
-                            height=180,
-                            disabled=True,
-                            key=f"retrieved-{result.chunk_id}",
-                        )
-
-
 def render_rag_section(settings: Settings) -> None:
-    st.subheader("Ask Knowledge Base")
-    st.write(
-        "Ask grounded questions against the persistent FAISS knowledge base, including "
-        "follow-up questions that rely on recent conversation context and multi-document reasoning."
-    )
-
     conversation_memory = ConversationMemoryService(
         settings,
         storage=st.session_state,
@@ -190,161 +156,423 @@ def render_rag_section(settings: Settings) -> None:
         conversation_memory_service=conversation_memory,
     )
 
-    controls_col, clear_col = st.columns([4, 1])
-    with controls_col:
-        top_k = st.number_input(
-            "Top-K Retrieval Depth",
-            min_value=1,
-            max_value=20,
-            value=settings.app.top_k_results,
-            step=1,
-            help=(
-                "The system may retrieve a few extra chunks internally to reduce chunk-boundary "
-                "misses before building the grounded context."
-            ),
-        )
-    with clear_col:
-        st.write("")
-        st.write("")
-        if st.button("Clear Conversation", type="secondary", use_container_width=True):
-            conversation_memory.clear_history()
-            st.session_state.pop(_LAST_RAG_RESPONSE_KEY, None)
-            st.rerun()
+    if consume_clear_conversation_request():
+        conversation_memory.clear_history()
+        clear_chat_transcript()
+        st.session_state.pop(LAST_RAG_RESPONSE_KEY, None)
+        st.rerun()
 
+    search_depth = get_search_depth(settings)
     history = conversation_memory.get_history()
-    if not history:
-        st.info("Conversation memory is empty. Ask a grounded question to start the chat.")
-    else:
-        for index, message in enumerate(history):
-            with st.chat_message(message.role):
-                st.write(message.content)
-                if message.role == "assistant" and message.grounded is False:
-                    st.caption("Ungrounded fallback response")
+    transcript = get_chat_transcript()
 
-    prompt = st.chat_input("Ask a grounded question or follow-up question...")
-    if prompt:
-        with st.chat_message("user"):
-            st.write(prompt)
-
-        try:
-            response = rag_service.answer_question(query=prompt, top_k=int(top_k))
-        except ProductSupportAgentError as exc:
-            st.error(str(exc))
+    with st.container(border=True):
+        if not transcript and not history:
+            st.info(
+                "Ask a question about your uploaded documents. The assistant will answer using the knowledge base."
+            )
         else:
-            st.session_state[_LAST_RAG_RESPONSE_KEY] = response.to_dict()
-            with st.chat_message("assistant"):
-                if response.error:
-                    st.error(response.error)
-                elif response.message and not response.grounded:
-                    st.warning(response.message)
-                st.write(response.answer or "No answer was generated.")
+            _render_chat_thread(transcript=transcript, fallback_history=history)
 
-    _render_latest_response_debug()
-
-
-def render_pipeline_notes_section(settings: Settings) -> None:
-    st.subheader("Phase 7 Scope")
-    st.write(
-        "This phase adds LangGraph orchestration and multi-document reasoning on top of the "
-        "existing grounded retrieval, memory, and Gemini generation pipeline."
-    )
-    st.markdown(
-        "\n".join(
-            [
-                "1. Load recent grounded conversation memory for contextual follow-up handling.",
-                "2. Rewrite ambiguous follow-up questions into standalone retrieval queries.",
-                "3. Retrieve from the persistent FAISS index using the resolved query.",
-                "4. Filter weak results using the configured grounded relevance threshold.",
-                "5. Route between simple grounded QA and multi-document reasoning with LangGraph.",
-                "6. Summarize per-document evidence and synthesize a grounded final answer when needed.",
-                "7. Preserve deterministic citations and update session memory after completion.",
-            ]
+    with st.form("ask_ai_form", clear_on_submit=True, border=False):
+        prompt = st.text_area(
+            "Ask AI",
+            placeholder="Ask anything about your uploaded documentation...",
+            label_visibility="collapsed",
+            height=128,
         )
-    )
+        action_col, _ = st.columns([1.25, 6], vertical_alignment="bottom")
+        with action_col:
+            submitted = st.form_submit_button(
+                "Send",
+                type="primary",
+                use_container_width=True,
+            )
+
+    if submitted and prompt:
+        timestamp = _format_ui_timestamp()
+        append_chat_record({"role": "user", "content": prompt, "timestamp": timestamp})
+        start_time = perf_counter()
+        try:
+            with st.spinner("Thinking..."):
+                response = rag_service.answer_question(query=prompt, top_k=search_depth)
+        except ProductSupportAgentError as exc:
+            elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
+            error_payload = {
+                "query": prompt,
+                "answer": "",
+                "sources": [],
+                "retrieved_results": [],
+                "grounded": False,
+                "reasoning_strategy": "SIMPLE_QA",
+                "graph_nodes_executed": [],
+                "retrieved_chunk_count": 0,
+                "relevant_chunk_count": 0,
+                "source_documents": [],
+                "document_evidence": [],
+                "resolved_query": prompt,
+                "memory_messages_used": len(history),
+                "message": "The assistant could not complete the request.",
+                "error": str(exc),
+                "response_time_ms": elapsed_ms,
+            }
+            st.session_state[LAST_RAG_RESPONSE_KEY] = error_payload
+            append_chat_record(
+                {
+                    "role": "assistant",
+                    "content": str(exc),
+                    "grounded": False,
+                    "timestamp": _format_ui_timestamp(),
+                    "response": error_payload,
+                }
+            )
+        else:
+            elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
+            latest_response = response.to_dict()
+            latest_response["response_time_ms"] = elapsed_ms
+            st.session_state[LAST_RAG_RESPONSE_KEY] = latest_response
+            append_chat_record(
+                {
+                    "role": "assistant",
+                    "content": response.answer or response.message or "No answer was generated.",
+                    "grounded": response.grounded,
+                    "timestamp": _format_ui_timestamp(),
+                    "response": latest_response,
+                }
+            )
+        st.rerun()
 
 
-def _render_latest_response_debug() -> None:
-    latest_response = st.session_state.get(_LAST_RAG_RESPONSE_KEY)
-    if not latest_response:
+def _render_chat_thread(
+    *,
+    transcript: list[dict[str, object]],
+    fallback_history: list[object],
+) -> None:
+    if transcript:
+        turns = _build_transcript_turns(transcript)
+        for turn in turns:
+            if turn["user_content"]:
+                render_conversation_turn(
+                    user_content=turn["user_content"],
+                    assistant_content=turn["assistant_content"] or None,
+                    user_timestamp=turn["user_timestamp"],
+                    assistant_timestamp=turn["assistant_timestamp"],
+                )
+            elif turn["assistant_content"]:
+                render_message_bubble(
+                    role="assistant",
+                    content=turn["assistant_content"],
+                    timestamp=turn["assistant_timestamp"],
+                )
         return
 
-    with st.expander("Sources", expanded=False):
-        sources = latest_response.get("sources", [])
+    turns = _build_history_turns(fallback_history)
+    for turn in turns:
+        if turn["user_content"]:
+            render_conversation_turn(
+                user_content=turn["user_content"],
+                assistant_content=turn["assistant_content"] or None,
+                user_timestamp=turn["user_timestamp"],
+                assistant_timestamp=turn["assistant_timestamp"],
+            )
+        elif turn["assistant_content"]:
+            render_message_bubble(
+                role="assistant",
+                content=turn["assistant_content"],
+                timestamp=turn["assistant_timestamp"],
+            )
+
+
+def _render_response_details(response: dict[str, object], *, key_prefix: str) -> None:
+    sources = response.get("sources", [])
+    retrieved_results = response.get("retrieved_results", [])
+
+    with st.expander(f"Sources ({len(sources)})", expanded=False):
         if not sources:
-            st.info("No source citations are available for the latest response.")
+            st.info("No source citations are available for this answer.")
         else:
-            for index, source in enumerate(sources, start=1):
-                with st.container(border=True):
-                    st.markdown(f"**Source {index}:** `{source.get('file_name', '')}`")
-                    st.markdown(f"**Chunk ID:** `{source.get('chunk_id', '')}`")
-                    if source.get("page_number") is not None:
-                        st.markdown(f"**Page Number:** `{source['page_number']}`")
-                    if source.get("row_number") is not None:
-                        st.markdown(f"**Row Number:** `{source['row_number']}`")
-                    if source.get("chunk_number") is not None:
-                        st.markdown(f"**Chunk Number:** `{source['chunk_number']}`")
+            _render_source_cards(response=response)
 
     with st.expander("Debug", expanded=False):
-        st.markdown(f"**Original Query:** `{latest_response.get('query', '')}`")
-        st.markdown(
-            f"**Resolved Retrieval Query:** `{latest_response.get('resolved_query', '')}`"
+        _render_debug_contents(
+            latest_response=response,
+            key_prefix=f"{key_prefix}-debug",
         )
-        st.markdown(
-            f"**Memory Messages Used:** `{latest_response.get('memory_messages_used', 0)}`"
-        )
-        st.markdown(
-            f"**Reasoning Strategy:** `{latest_response.get('reasoning_strategy', 'SIMPLE_QA')}`"
-        )
-        st.markdown(
-            f"**Graph Nodes Executed:** `{', '.join(latest_response.get('graph_nodes_executed', []))}`"
-        )
-        st.markdown(
-            f"**Retrieved Chunk Count:** `{latest_response.get('retrieved_chunk_count', 0)}`"
-        )
-        st.markdown(
-            f"**Relevant Chunk Count:** `{latest_response.get('relevant_chunk_count', 0)}`"
-        )
-        st.markdown(
-            f"**Source Documents:** `{', '.join(latest_response.get('source_documents', []))}`"
-        )
-
-        document_evidence = latest_response.get("document_evidence", [])
-        if document_evidence:
-            st.markdown("**Document Evidence Summaries**")
-            for evidence in document_evidence:
-                with st.container(border=True):
-                    st.markdown(f"**File:** `{evidence.get('file_name', '')}`")
-                    st.markdown(
-                        f"**Chunk IDs:** `{', '.join(evidence.get('chunk_ids', []))}`"
-                    )
-                    st.text_area(
-                        "Evidence Summary",
-                        value=evidence.get("summary", ""),
-                        height=140,
-                        disabled=True,
-                        key=f"evidence-{evidence.get('file_name', '')}",
-                    )
-
-        retrieved_results = latest_response.get("retrieved_results", [])
-        if not retrieved_results:
-            st.info("No retrieved chunks were available for inspection.")
+        if retrieved_results:
+            st.markdown("### Retrieved Context")
+            _render_retrieved_results(
+                [dict(item) for item in retrieved_results if isinstance(item, dict)],
+                key_prefix=f"{key_prefix}-retrieved",
+            )
         else:
-            for result in retrieved_results:
-                with st.container(border=True):
-                    st.markdown(f"**Source File:** `{result.get('source_file', '')}`")
-                    st.markdown(f"**Chunk ID:** `{result.get('chunk_id', '')}`")
-                    st.markdown(f"**Document Type:** `{result.get('document_type', '')}`")
-                    st.markdown(f"**Similarity Score:** `{result.get('score', 0.0):.6f}`")
-                    if result.get("page_number") is not None:
-                        st.markdown(f"**Page Number:** `{result['page_number']}`")
-                    if result.get("row_number") is not None:
-                        st.markdown(f"**Row Number:** `{result['row_number']}`")
-                    if result.get("chunk_number") is not None:
-                        st.markdown(f"**Chunk Number:** `{result['chunk_number']}`")
-                    st.text_area(
-                        "Retrieved Chunk",
-                        value=result.get("content", ""),
-                        height=180,
-                        disabled=True,
-                        key=f"rag-retrieved-{result.get('chunk_id', '')}",
-                    )
+            st.info("No retrieved chunks were available for inspection.")
+
+
+def _render_source_cards(response: dict[str, object]) -> None:
+    sources = response.get("sources", [])
+    retrieved_results = response.get("retrieved_results", [])
+    results_by_chunk = {
+        str(item.get("chunk_id", "")): item
+        for item in retrieved_results
+        if isinstance(item, dict)
+    }
+
+    for index, source in enumerate(sources, start=1):
+        if not isinstance(source, dict):
+            continue
+        chunk_id = str(source.get("chunk_id", ""))
+        result = results_by_chunk.get(chunk_id, {})
+        with st.container(border=True):
+            cols = st.columns([3, 1.2, 1.1])
+            with cols[0]:
+                st.markdown(f"**Source {index}**")
+                st.write(str(source.get("file_name", "Unknown file")))
+            with cols[1]:
+                st.markdown("**Location**")
+                st.write(_format_source_location(source))
+            with cols[2]:
+                st.markdown("**Similarity**")
+                if result.get("score") is None:
+                    st.write("N/A")
+                else:
+                    st.write(f"{float(result['score']):.4f}")
+
+            with st.expander("Preview", expanded=False):
+                preview = str(result.get("content", "")).strip()
+                if preview:
+                    st.write(preview)
+                else:
+                    st.info("No chunk preview is available for this source.")
+
+
+def _render_debug_contents(latest_response: dict[str, object], *, key_prefix: str) -> None:
+    st.markdown(f"**Original Query:** `{latest_response.get('query', '')}`")
+    st.markdown(
+        f"**Resolved Retrieval Query:** `{latest_response.get('resolved_query', '')}`"
+    )
+    st.markdown(
+        f"**Memory Messages Used:** `{latest_response.get('memory_messages_used', 0)}`"
+    )
+    st.markdown(
+        f"**Reasoning Strategy:** `{latest_response.get('reasoning_strategy', 'SIMPLE_QA')}`"
+    )
+    st.markdown(
+        f"**Graph Nodes Executed:** `{', '.join(latest_response.get('graph_nodes_executed', []))}`"
+    )
+    st.markdown(
+        f"**Retrieved Chunk Count:** `{latest_response.get('retrieved_chunk_count', 0)}`"
+    )
+    st.markdown(
+        f"**Relevant Chunk Count:** `{latest_response.get('relevant_chunk_count', 0)}`"
+    )
+    st.markdown(
+        f"**Source Documents:** `{', '.join(latest_response.get('source_documents', []))}`"
+    )
+    response_time = latest_response.get("response_time_ms")
+    if response_time is not None:
+        st.markdown(f"**Response Time:** `{response_time} ms`")
+
+    message = str(latest_response.get("message", "")).strip()
+    error = str(latest_response.get("error", "")).strip()
+    if message:
+        st.markdown(f"**Message:** `{message}`")
+    if error:
+        st.markdown(f"**Error:** `{error}`")
+
+    document_evidence = latest_response.get("document_evidence", [])
+    if document_evidence:
+        st.markdown("### Document Evidence Summaries")
+        for evidence in document_evidence:
+            if not isinstance(evidence, dict):
+                continue
+            with st.container(border=True):
+                st.markdown(f"**File:** `{evidence.get('file_name', '')}`")
+                st.markdown(
+                    f"**Chunk IDs:** `{', '.join(evidence.get('chunk_ids', []))}`"
+                )
+                st.text_area(
+                    "Evidence Summary",
+                    value=evidence.get("summary", ""),
+                    height=140,
+                    disabled=True,
+                    key=f"{key_prefix}-evidence-{evidence.get('file_name', '')}",
+                )
+
+
+def _render_retrieved_results(
+    retrieved_results: list[dict[str, object]],
+    *,
+    key_prefix: str,
+) -> None:
+    for index, result in enumerate(retrieved_results, start=1):
+        with st.container(border=True):
+            cols = st.columns([3, 1, 1, 1])
+            with cols[0]:
+                st.markdown(f"**Result {index}**")
+                st.write(str(result.get("source_file", "Unknown file")))
+            with cols[1]:
+                st.markdown("**Chunk**")
+                st.write(str(result.get("chunk_id", "N/A")))
+            with cols[2]:
+                st.markdown("**Type**")
+                st.write(str(result.get("document_type", "unknown")).upper())
+            with cols[3]:
+                st.markdown("**Similarity**")
+                score = result.get("score")
+                st.write(f"{float(score):.4f}" if score is not None else "N/A")
+
+            location = _format_result_location(result)
+            if location:
+                st.caption(location)
+
+            with st.expander("Chunk Preview", expanded=False):
+                st.text_area(
+                    "Retrieved Chunk",
+                    value=str(result.get("content", "")),
+                    height=180,
+                    disabled=True,
+                    key=f"{key_prefix}-{result.get('chunk_id', index)}",
+                )
+
+
+def _format_result_location(result: dict[str, object]) -> str:
+    parts: list[str] = []
+    if result.get("page_number") is not None:
+        parts.append(f"Page {result['page_number']}")
+    if result.get("row_number") is not None:
+        parts.append(f"Row {result['row_number']}")
+    if result.get("chunk_number") is not None:
+        parts.append(f"Chunk {result['chunk_number']}")
+    return " | ".join(parts)
+
+
+def _format_source_location(source: dict[str, object]) -> str:
+    parts: list[str] = []
+    if source.get("page_number") is not None:
+        parts.append(f"Page {source['page_number']}")
+    if source.get("row_number") is not None:
+        parts.append(f"Row {source['row_number']}")
+    if source.get("chunk_number") is not None:
+        parts.append(f"Chunk {source['chunk_number']}")
+    return " | ".join(parts) or "Chunk reference"
+
+
+def _load_chunk_counts_by_file(settings: Settings) -> Counter[str]:
+    metadata_manager = MetadataManager(settings)
+    try:
+        vector_state = metadata_manager.load_vector_state()
+    except ProductSupportAgentError:
+        return Counter()
+
+    records = vector_state.get("records", []) if vector_state else []
+    counter: Counter[str] = Counter()
+    for record in records:
+        metadata = record.get("metadata") or {}
+        file_name = str(metadata.get("file_name", "")).strip()
+        if file_name:
+            counter[file_name] += 1
+    return counter
+
+
+def _document_icon(item: dict[str, object]) -> str:
+    document_type = str((item.get("document_metadata") or {}).get("document_type", "")).lower()
+    return {
+        "pdf": "\U0001F4D5",
+        "txt": "\U0001F4DD",
+        "csv": "\U0001F9FE",
+    }.get(document_type, "\U0001F4C4")
+
+
+def _pending_file_icon(file_name: str) -> str:
+    lower_name = file_name.lower()
+    if lower_name.endswith(".pdf"):
+        return "\U0001F4D5"
+    if lower_name.endswith(".txt"):
+        return "\U0001F4DD"
+    if lower_name.endswith(".csv"):
+        return "\U0001F9FE"
+    return "\U0001F4C4"
+
+
+def _format_ui_timestamp() -> str:
+    return datetime.now().strftime("%I:%M %p").lstrip("0")
+
+
+def _coerce_message_timestamp(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%I:%M %p").lstrip("0")
+    return ""
+
+
+def _build_transcript_turns(
+    transcript: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    turns: list[dict[str, str]] = []
+    current_turn: dict[str, str] | None = None
+
+    for record in transcript:
+        role = str(record.get("role", "assistant"))
+        content = str(record.get("content", ""))
+        timestamp = str(record.get("timestamp", ""))
+
+        if role == "user":
+            current_turn = {
+                "user_content": content,
+                "user_timestamp": timestamp,
+                "assistant_content": "",
+                "assistant_timestamp": "",
+            }
+            turns.append(current_turn)
+            continue
+
+        if current_turn is None or current_turn.get("assistant_content"):
+            current_turn = {
+                "user_content": "",
+                "user_timestamp": "",
+                "assistant_content": content,
+                "assistant_timestamp": timestamp,
+            }
+            turns.append(current_turn)
+            continue
+
+        current_turn["assistant_content"] = content
+        current_turn["assistant_timestamp"] = timestamp
+
+    return turns
+
+
+def _build_history_turns(
+    fallback_history: list[object],
+) -> list[dict[str, str]]:
+    turns: list[dict[str, str]] = []
+    current_turn: dict[str, str] | None = None
+
+    for message in fallback_history:
+        role = getattr(message, "role", "assistant")
+        content = getattr(message, "content", "")
+        timestamp = _coerce_message_timestamp(getattr(message, "created_at", None))
+
+        if role == "user":
+            current_turn = {
+                "user_content": content,
+                "user_timestamp": timestamp,
+                "assistant_content": "",
+                "assistant_timestamp": "",
+            }
+            turns.append(current_turn)
+            continue
+
+        if current_turn is None or current_turn.get("assistant_content"):
+            current_turn = {
+                "user_content": "",
+                "user_timestamp": "",
+                "assistant_content": content,
+                "assistant_timestamp": timestamp,
+            }
+            turns.append(current_turn)
+            continue
+
+        current_turn["assistant_content"] = content
+        current_turn["assistant_timestamp"] = timestamp
+
+    return turns

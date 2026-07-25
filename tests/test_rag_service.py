@@ -47,7 +47,7 @@ class _FakeRetriever:
         return self._response
 
 
-class _FakeGeminiService:
+class _FakeLLMService:
     def __init__(
         self,
         *,
@@ -64,16 +64,41 @@ class _FakeGeminiService:
         self._error = error
         self._rewrite_error = rewrite_error
         self._task_errors = dict(task_errors or {})
-        self.calls: list[dict[str, str]] = []
+        self.calls: list[dict[str, object]] = []
         self.task_calls: list[dict[str, object]] = []
 
-    def generate_answer(
+    def contextualize_query(
+        self,
+        *,
+        system_instruction: str,
+        conversation_history: str,
+        current_query: str,
+        temperature: float,
+        max_output_tokens: int,
+    ) -> str:
+        self.calls.append(
+            {
+                "system_instruction": system_instruction,
+                "conversation_history": conversation_history,
+                "current_query": current_query,
+                "temperature": temperature,
+                "max_output_tokens": max_output_tokens,
+                "task_name": "query contextualization",
+            }
+        )
+        if self._rewrite_error is not None:
+            raise self._rewrite_error
+        return self._rewrite_answer
+
+    def generate_grounded_answer(
         self,
         *,
         system_instruction: str,
         context: str,
         user_question: str,
-        resolved_query: str | None = None,
+        resolved_query: str | None,
+        temperature: float,
+        max_output_tokens: int,
     ) -> str:
         self.calls.append(
             {
@@ -81,37 +106,71 @@ class _FakeGeminiService:
                 "context": context,
                 "user_question": user_question,
                 "resolved_query": resolved_query or "",
+                "temperature": temperature,
+                "max_output_tokens": max_output_tokens,
+                "task_name": "grounded generation",
             }
         )
         if self._error is not None:
             raise self._error
         return self._answer
 
-    def generate_text(
+    def summarize_document(
         self,
         *,
         system_instruction: str,
-        user_content: str,
+        user_question: str,
+        file_name: str,
+        document_context: str,
         temperature: float,
         max_output_tokens: int,
-        task_name: str,
     ) -> str:
         self.task_calls.append(
             {
                 "system_instruction": system_instruction,
-                "user_content": user_content,
+                "user_question": user_question,
+                "file_name": file_name,
+                "document_context": document_context,
                 "temperature": temperature,
                 "max_output_tokens": max_output_tokens,
-                "task_name": task_name,
+                "task_name": "document evidence summarization",
             }
         )
-        if task_name == "query contextualization" and self._rewrite_error is not None:
-            raise self._rewrite_error
+        task_name = "document evidence summarization"
         if task_name in self._task_errors:
             raise self._task_errors[task_name]
-        if task_name == "query contextualization":
-            return self._rewrite_answer
 
+        configured_response = self._task_responses.get(task_name)
+        if isinstance(configured_response, list):
+            if not configured_response:  # pragma: no cover - defensive guard
+                raise AssertionError(f"No fake responses remain for task {task_name}.")
+            return configured_response.pop(0)
+        if isinstance(configured_response, str):
+            return configured_response
+        return ""
+
+    def synthesize_documents(
+        self,
+        *,
+        system_instruction: str,
+        user_question: str,
+        document_evidence: str,
+        temperature: float,
+        max_output_tokens: int,
+    ) -> str:
+        self.task_calls.append(
+            {
+                "system_instruction": system_instruction,
+                "user_question": user_question,
+                "document_evidence": document_evidence,
+                "temperature": temperature,
+                "max_output_tokens": max_output_tokens,
+                "task_name": "multi-document synthesis",
+            }
+        )
+        task_name = "multi-document synthesis"
+        if task_name in self._task_errors:
+            raise self._task_errors[task_name]
         configured_response = self._task_responses.get(task_name)
         if isinstance(configured_response, list):
             if not configured_response:  # pragma: no cover - defensive guard
@@ -194,11 +253,11 @@ def test_rag_service_generates_grounded_answer_with_sources(test_settings) -> No
             ],
         )
     )
-    gemini = _FakeGeminiService(answer="The supported languages are Java, Python, and C++.")
+    llm_service = _FakeLLMService(answer="The supported languages are Java, Python, and C++.")
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=2)
@@ -222,8 +281,8 @@ def test_rag_service_generates_grounded_answer_with_sources(test_settings) -> No
         "update_memory",
     ]
     assert retriever.calls == [(query, 4)]
-    assert "SOURCE 1" in gemini.calls[0]["context"]
-    assert "data/uploads" not in gemini.calls[0]["context"]
+    assert "SOURCE 1" in llm_service.calls[0]["context"]
+    assert "data/uploads" not in llm_service.calls[0]["context"]
 
 
 def test_rag_service_deduplicates_duplicate_source_references(test_settings) -> None:
@@ -236,11 +295,11 @@ def test_rag_service_deduplicates_duplicate_source_references(test_settings) -> 
     retriever = _FakeRetriever(
         response=_make_response(query, [duplicated_result, duplicated_result])
     )
-    gemini = _FakeGeminiService(answer="Hold the reset button.")
+    llm_service = _FakeLLMService(answer="Hold the reset button.")
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=1)
@@ -254,7 +313,7 @@ def test_rag_service_rejects_empty_query(test_settings) -> None:
     rag_service = RAGService(
         test_settings,
         retriever_service=_FakeRetriever(response=_make_response("unused", [])),
-        gemini_service=_FakeGeminiService(answer="unused"),
+        llm_service=_FakeLLMService(answer="unused"),
     )
 
     with pytest.raises(ValidationError, match="empty or whitespace only"):
@@ -264,11 +323,11 @@ def test_rag_service_rejects_empty_query(test_settings) -> None:
 def test_rag_service_returns_fallback_without_gemini_when_no_results(test_settings) -> None:
     query = "What is the support window?"
     retriever = _FakeRetriever(response=_make_response(query, []))
-    gemini = _FakeGeminiService(answer="unused")
+    llm_service = _FakeLLMService(answer="unused")
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=2)
@@ -277,7 +336,7 @@ def test_rag_service_returns_fallback_without_gemini_when_no_results(test_settin
     assert response.answer == FALLBACK_NO_CONTEXT_MESSAGE
     assert response.message == "No relevant context was retrieved from the knowledge base."
     assert "no_results_fallback" in response.graph_nodes_executed
-    assert not gemini.calls
+    assert not llm_service.calls
 
 
 def test_rag_service_returns_fallback_for_empty_context(test_settings) -> None:
@@ -294,11 +353,11 @@ def test_rag_service_returns_fallback_for_empty_context(test_settings) -> None:
             ],
         )
     )
-    gemini = _FakeGeminiService(answer="unused")
+    llm_service = _FakeLLMService(answer="unused")
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     with patch.object(RAGService, "_build_context", return_value=""):
@@ -307,7 +366,7 @@ def test_rag_service_returns_fallback_for_empty_context(test_settings) -> None:
     assert response.grounded is False
     assert response.answer == FALLBACK_NO_CONTEXT_MESSAGE
     assert response.message == "Grounded context could not be constructed from the retrieved results."
-    assert not gemini.calls
+    assert not llm_service.calls
 
 
 def test_rag_service_handles_gemini_failure_cleanly(test_settings) -> None:
@@ -324,13 +383,13 @@ def test_rag_service_handles_gemini_failure_cleanly(test_settings) -> None:
             ],
         )
     )
-    gemini = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         error=GenerationError("Gemini request failed during grounded answer generation.")
     )
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=1)
@@ -354,11 +413,11 @@ def test_rag_service_handles_empty_gemini_response(test_settings) -> None:
             ],
         )
     )
-    gemini = _FakeGeminiService(answer="   ")
+    llm_service = _FakeLLMService(answer="   ")
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=1)
@@ -372,7 +431,7 @@ def test_rag_service_validates_top_k(test_settings) -> None:
     rag_service = RAGService(
         test_settings,
         retriever_service=_FakeRetriever(response=_make_response("unused", [])),
-        gemini_service=_FakeGeminiService(answer="unused"),
+        llm_service=_FakeLLMService(answer="unused"),
     )
 
     with pytest.raises(ValidationError, match="Top-K must be greater than zero"):
@@ -397,11 +456,11 @@ def test_rag_service_filters_weak_results_before_generation(test_settings) -> No
             ],
         )
     )
-    gemini = _FakeGeminiService(answer="unused")
+    llm_service = _FakeLLMService(answer="unused")
     rag_service = RAGService(
         stricter_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=1)
@@ -411,7 +470,7 @@ def test_rag_service_filters_weak_results_before_generation(test_settings) -> No
     assert response.retrieved_chunk_count == 1
     assert response.relevant_chunk_count == 0
     assert "low_relevance_fallback" in response.graph_nodes_executed
-    assert not gemini.calls
+    assert not llm_service.calls
 
 
 def test_rag_response_to_dict_includes_phase7_fields() -> None:
@@ -453,7 +512,9 @@ def test_rag_service_uses_contextualized_query_and_stores_memory(test_settings) 
             ],
         )
     )
-    gemini = _FakeGeminiService(answer="A 1-minute breaktime comes after Advanced Coding Easy.")
+    llm_service = _FakeLLMService(
+        answer="A 1-minute breaktime comes after Advanced Coding Easy."
+    )
     contextualizer = _FakeContextualizer(
         resolved_query="What comes after Advanced Coding Easy?"
     )
@@ -471,7 +532,7 @@ def test_rag_service_uses_contextualized_query_and_stores_memory(test_settings) 
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
         conversation_memory_service=memory_service,
         query_contextualizer=contextualizer,
     )
@@ -483,8 +544,8 @@ def test_rag_service_uses_contextualized_query_and_stores_memory(test_settings) 
     assert response.resolved_query == "What comes after Advanced Coding Easy?"
     assert response.memory_messages_used == 2
     assert retriever.calls == [("What comes after Advanced Coding Easy?", 3)]
-    assert gemini.calls[0]["user_question"] == "What comes after that?"
-    assert gemini.calls[0]["resolved_query"] == "What comes after Advanced Coding Easy?"
+    assert llm_service.calls[0]["user_question"] == "What comes after that?"
+    assert llm_service.calls[0]["resolved_query"] == "What comes after Advanced Coding Easy?"
     assert response.graph_nodes_executed[-1] == "update_memory"
 
     history = memory_service.get_history()
@@ -511,7 +572,7 @@ def test_rag_service_falls_back_to_original_query_when_contextualization_fails(
             ],
         )
     )
-    gemini = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         answer="A 1-minute breaktime comes after Advanced Coding Easy.",
         rewrite_error=GenerationError("Contextualization failed."),
     )
@@ -529,11 +590,11 @@ def test_rag_service_falls_back_to_original_query_when_contextualization_fails(
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
         conversation_memory_service=memory_service,
         query_contextualizer=QueryContextualizer(
             test_settings,
-            gemini_service=gemini,
+            llm_service=llm_service,
         ),
     )
 
@@ -567,7 +628,7 @@ def test_rag_service_routes_multi_document_queries_through_synthesis(test_settin
             ],
         )
     )
-    gemini = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         task_responses={
             "document evidence summarization": [
                 "Document A requires Python 3.11 and 8 GB RAM.",
@@ -582,7 +643,7 @@ def test_rag_service_routes_multi_document_queries_through_synthesis(test_settin
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=2)
@@ -593,10 +654,10 @@ def test_rag_service_routes_multi_document_queries_through_synthesis(test_settin
     assert response.source_documents == ["doc-a.pdf", "doc-b.pdf"]
     assert len(response.document_evidence) == 2
     assert len(response.sources) == 2
-    assert not gemini.calls
+    assert not llm_service.calls
     assert [
         call["task_name"]
-        for call in gemini.task_calls
+        for call in llm_service.task_calls
     ] == [
         "document evidence summarization",
         "document evidence summarization",
@@ -628,7 +689,7 @@ def test_rag_service_handles_multi_document_reasoning_failure_cleanly(test_setti
             ],
         )
     )
-    gemini = _FakeGeminiService(
+    llm_service = _FakeLLMService(
         task_errors={
             "document evidence summarization": GenerationError(
                 "Gemini request failed during grounded answer generation."
@@ -638,7 +699,7 @@ def test_rag_service_handles_multi_document_reasoning_failure_cleanly(test_setti
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=2)
@@ -674,11 +735,13 @@ def test_rag_service_keeps_simple_path_when_query_is_not_multi_document_reasonin
             ],
         )
     )
-    gemini = _FakeGeminiService(answer="The retrieved documents describe installation requirements.")
+    llm_service = _FakeLLMService(
+        answer="The retrieved documents describe installation requirements."
+    )
     rag_service = RAGService(
         test_settings,
         retriever_service=retriever,
-        gemini_service=gemini,
+        llm_service=llm_service,
     )
 
     response = rag_service.answer_question(query, top_k=2)
@@ -687,4 +750,3 @@ def test_rag_service_keeps_simple_path_when_query_is_not_multi_document_reasonin
     assert response.reasoning_strategy == "SIMPLE_QA"
     assert "simple_grounded_answer" in response.graph_nodes_executed
     assert "summarize_document_evidence" not in response.graph_nodes_executed
-

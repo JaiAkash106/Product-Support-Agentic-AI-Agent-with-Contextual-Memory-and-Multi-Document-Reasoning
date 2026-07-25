@@ -4,7 +4,8 @@ from product_support_agent.config import Settings
 from product_support_agent.exceptions import ContextualizationError, ProductSupportAgentError
 from product_support_agent.logger import get_logger
 from product_support_agent.models import ConversationMessage, ServiceStatus
-from product_support_agent.services.gemini_service import GeminiService
+from product_support_agent.services.llm import build_llm_service
+from product_support_agent.services.llm.base import BaseLLMService
 from product_support_agent.services.prompt_manager import PromptManager
 
 
@@ -15,11 +16,11 @@ class QueryContextualizer:
         self,
         settings: Settings,
         *,
-        gemini_service: GeminiService | None = None,
+        llm_service: BaseLLMService | None = None,
         prompt_manager: PromptManager | None = None,
     ) -> None:
         self._settings = settings
-        self._gemini_service = gemini_service or GeminiService(settings)
+        self._llm_service = llm_service or build_llm_service(settings)
         self._prompt_manager = prompt_manager or PromptManager(settings)
         self._logger = get_logger(__name__)
 
@@ -51,12 +52,12 @@ class QueryContextualizer:
             len(normalized_query),
         )
         try:
-            resolved_query = self._gemini_service.generate_text(
+            resolved_query = self._llm_service.contextualize_query(
                 system_instruction=prompt,
-                user_content=contents,
+                conversation_history=self._extract_history_block(contents),
+                current_query=normalized_query,
                 temperature=self._settings.app.contextualizer_temperature,
                 max_output_tokens=self._settings.app.contextualizer_max_output_tokens,
-                task_name="query contextualization",
             )
         except ProductSupportAgentError as exc:
             self._logger.warning(
@@ -97,6 +98,18 @@ class QueryContextualizer:
             f"CURRENT USER QUESTION:\n{current_query}\n\n"
             "REWRITTEN STANDALONE QUERY:\n"
         )
+
+    @staticmethod
+    def _extract_history_block(contents: str) -> str:
+        history_marker = "CONVERSATION HISTORY:\n"
+        current_question_marker = "\n\nCURRENT USER QUESTION:\n"
+
+        if history_marker not in contents or current_question_marker not in contents:
+            return contents
+
+        history_start = len(history_marker)
+        history_end = contents.index(current_question_marker)
+        return contents[history_start:history_end].strip()
 
     def status(self) -> ServiceStatus:
         return ServiceStatus(

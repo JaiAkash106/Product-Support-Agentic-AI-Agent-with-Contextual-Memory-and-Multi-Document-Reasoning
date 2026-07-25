@@ -20,7 +20,8 @@ from product_support_agent.models import (
     ServiceStatus,
     SourceReference,
 )
-from product_support_agent.services.gemini_service import GeminiService
+from product_support_agent.services.llm import build_llm_service
+from product_support_agent.services.llm.base import BaseLLMService
 from product_support_agent.services.memory import ConversationMemoryService
 from product_support_agent.services.prompt_manager import PromptManager
 from product_support_agent.services.query_contextualizer import QueryContextualizer
@@ -63,7 +64,7 @@ class RAGService:
         settings: Settings,
         *,
         retriever_service: RetrieverService | None = None,
-        gemini_service: GeminiService | None = None,
+        llm_service: BaseLLMService | None = None,
         prompt_manager: PromptManager | None = None,
         conversation_memory_service: ConversationMemoryService | None = None,
         query_contextualizer: QueryContextualizer | None = None,
@@ -71,12 +72,12 @@ class RAGService:
         self._settings = settings
         self._logger = get_logger(__name__)
         self._retriever = retriever_service or RetrieverService(settings)
-        self._gemini_service = gemini_service or GeminiService(settings)
+        self._llm_service = llm_service or build_llm_service(settings)
         self._prompt_manager = prompt_manager or PromptManager(settings)
         self._conversation_memory = conversation_memory_service
         self._query_contextualizer = query_contextualizer or QueryContextualizer(
             settings,
-            gemini_service=self._gemini_service,
+            llm_service=self._llm_service,
             prompt_manager=self._prompt_manager,
         )
         self._graph = self._build_graph()
@@ -330,11 +331,13 @@ class RAGService:
             )
 
         try:
-            answer = self._gemini_service.generate_answer(
+            answer = self._llm_service.generate_grounded_answer(
                 system_instruction=self._prompt_manager.load_default_prompt(),
                 context=context,
                 user_question=state["original_query"],
                 resolved_query=state.get("resolved_query"),
+                temperature=self._settings.app.gemini_temperature,
+                max_output_tokens=self._settings.app.gemini_max_output_tokens,
             )
         except (ConfigurationError, GenerationError) as exc:
             self._logger.warning("Simple grounded answer generation failed: %s", str(exc))
@@ -370,16 +373,15 @@ class RAGService:
         )
         for file_name, document_results in grouped_results.items():
             try:
-                summary = self._gemini_service.generate_text(
+                summary = self._llm_service.summarize_document(
                     system_instruction=summary_prompt,
-                    user_content=self._build_document_summary_request(
-                        query=state["original_query"],
-                        file_name=file_name,
+                    user_question=state["original_query"],
+                    file_name=file_name,
+                    document_context=self._build_document_summary_context(
                         results=document_results,
                     ),
                     temperature=self._settings.app.gemini_temperature,
                     max_output_tokens=self._settings.app.gemini_max_output_tokens,
-                    task_name="document evidence summarization",
                 )
             except (ConfigurationError, GenerationError) as exc:
                 self._logger.warning(
@@ -421,15 +423,14 @@ class RAGService:
 
         synthesis_prompt = self._prompt_manager.load_multi_document_synthesis_prompt()
         try:
-            answer = self._gemini_service.generate_text(
+            answer = self._llm_service.synthesize_documents(
                 system_instruction=synthesis_prompt,
-                user_content=self._build_multi_document_synthesis_request(
-                    query=state["original_query"],
+                user_question=state["original_query"],
+                document_evidence=self._build_multi_document_synthesis_evidence(
                     evidence_summaries=evidence_summaries,
                 ),
                 temperature=self._settings.app.gemini_temperature,
                 max_output_tokens=self._settings.app.gemini_max_output_tokens,
-                task_name="multi-document synthesis",
             )
         except (ConfigurationError, GenerationError) as exc:
             self._logger.warning("Multi-document synthesis failed: %s", str(exc))
@@ -597,14 +598,12 @@ class RAGService:
             grouped_results[result.source_file].append(result)
         return dict(grouped_results)
 
-    def _build_document_summary_request(
-        self,
+    @staticmethod
+    def _build_document_summary_context(
         *,
-        query: str,
-        file_name: str,
         results: list[RetrievalResult],
     ) -> str:
-        blocks: list[str] = [f"USER QUESTION:\n{query}", f"DOCUMENT FILE:\n{file_name}"]
+        blocks: list[str] = []
         for index, result in enumerate(results, start=1):
             lines = [
                 f"[DOCUMENT SOURCE {index}]",
@@ -625,16 +624,14 @@ class RAGService:
                 ]
             )
             blocks.append("\n".join(lines))
-        blocks.append("EVIDENCE SUMMARY:\n")
         return "\n\n".join(blocks)
 
     @staticmethod
-    def _build_multi_document_synthesis_request(
+    def _build_multi_document_synthesis_evidence(
         *,
-        query: str,
         evidence_summaries: list[DocumentEvidenceSummary],
     ) -> str:
-        blocks: list[str] = [f"USER QUESTION:\n{query}"]
+        blocks: list[str] = []
         for index, evidence in enumerate(evidence_summaries, start=1):
             chunk_ids = ", ".join(evidence.chunk_ids)
             lines = [
@@ -645,7 +642,6 @@ class RAGService:
                 evidence.summary,
             ]
             blocks.append("\n".join(lines))
-        blocks.append("FINAL ANSWER:\n")
         return "\n\n".join(blocks)
 
     def _apply_fallback(

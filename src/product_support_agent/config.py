@@ -108,6 +108,9 @@ class AppSettings:
     rag_relevance_threshold: float
     rag_context_expansion_chunks: int
     memory_max_turns: int
+    llm_provider: str = "gemini"
+    ollama_model: str = "qwen3:8b"
+    ollama_base_url: str = "http://localhost:11434"
 
 
 @dataclass(frozen=True)
@@ -193,6 +196,9 @@ def _build_app() -> AppSettings:
         rag_relevance_threshold=_get_float("RAG_RELEVANCE_THRESHOLD", 0.35),
         rag_context_expansion_chunks=_get_int("RAG_CONTEXT_EXPANSION_CHUNKS", 2),
         memory_max_turns=_get_int("MEMORY_MAX_TURNS", 6),
+        llm_provider=os.getenv("LLM_PROVIDER", "gemini").strip().lower() or "gemini",
+        ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
+        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
     )
 
 
