@@ -10,6 +10,7 @@ from product_support_agent.config import Settings
 from product_support_agent.exceptions import ProductSupportAgentError
 from product_support_agent.models import UploadPayload
 from product_support_agent.services.indexing_pipeline import KnowledgeBaseIngestionPipeline
+from product_support_agent.services.knowledge_base_service import KnowledgeBaseService
 from product_support_agent.services.memory import ConversationMemoryService
 from product_support_agent.services.metadata_manager import MetadataManager
 from product_support_agent.services.rag_service import RAGService
@@ -32,6 +33,8 @@ from product_support_agent.utils import human_readable_size
 
 
 _CHAT_SESSION_ID = "ask_knowledge_base"
+_CLEAR_KB_SUCCESS_KEY = "ui_clear_knowledge_base_success"
+_UPLOAD_WIDGET_VERSION_KEY = "ui_upload_widget_version"
 
 
 def _load_upload_manifest(settings: Settings) -> list[dict[str, object]]:
@@ -43,6 +46,10 @@ def _load_upload_manifest(settings: Settings) -> list[dict[str, object]]:
 
 
 def render_upload_section(settings: Settings) -> None:
+    success_message = st.session_state.pop(_CLEAR_KB_SUCCESS_KEY, "")
+    if success_message:
+        st.success(success_message)
+
     st.subheader("Add Knowledge")
     st.caption(
         "Upload your documents once so the assistant can search them and answer with grounded references."
@@ -50,10 +57,12 @@ def render_upload_section(settings: Settings) -> None:
 
     upload_manager = UploadManager(settings)
     pipeline = KnowledgeBaseIngestionPipeline(settings)
+    uploader_version = int(st.session_state.get(_UPLOAD_WIDGET_VERSION_KEY, 0))
     uploaded_files = st.file_uploader(
         "Choose files",
         type=[extension.lstrip(".") for extension in upload_manager.supported_extensions()],
         accept_multiple_files=True,
+        key=f"knowledge-base-upload-{uploader_version}",
         help=(
             f"Supported types: {', '.join(upload_manager.supported_extensions())}. "
             f"Maximum file size: {settings.app.max_upload_size_mb} MB."
@@ -73,7 +82,30 @@ def render_upload_section(settings: Settings) -> None:
             ]
         )
 
-    if st.button("Build Knowledge Base", type="primary"):
+    action_col, clear_col = st.columns([1.3, 1], vertical_alignment="center")
+    with action_col:
+        build_requested = st.button("Build Knowledge Base", type="primary")
+    with clear_col:
+        clear_requested = st.button("🗑 Clear Knowledge Base", type="secondary")
+
+    if clear_requested:
+        knowledge_base_service = KnowledgeBaseService(settings)
+        conversation_memory = ConversationMemoryService(
+            settings,
+            storage=st.session_state,
+            session_id=_CHAT_SESSION_ID,
+        )
+        knowledge_base_service.clear()
+        conversation_memory.clear_history()
+        clear_chat_transcript()
+        st.session_state.pop(LAST_RAG_RESPONSE_KEY, None)
+        st.session_state[_UPLOAD_WIDGET_VERSION_KEY] = uploader_version + 1
+        st.session_state[_CLEAR_KB_SUCCESS_KEY] = (
+            "Knowledge base cleared successfully. Upload new documents to begin indexing."
+        )
+        st.rerun()
+
+    if build_requested:
         if not uploaded_files:
             st.warning("Choose at least one file before updating the knowledge base.")
         else:
