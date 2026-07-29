@@ -20,6 +20,7 @@ def _make_chunk(
     text: str,
     source_path: Path,
     page_number: int | None = None,
+    section_title: str | None = None,
 ) -> ChunkRecord:
     return ChunkRecord(
         chunk_id=f"{file_name}:{page_number if page_number is not None else 'na'}:na:{chunk_number}",
@@ -30,6 +31,7 @@ def _make_chunk(
             chunk_number=chunk_number,
             page_number=page_number,
             source_path=source_path,
+            section_title=section_title,
             timestamp="2026-07-18 00:00:00 UTC",
         ),
     )
@@ -84,7 +86,7 @@ def test_retriever_rejects_empty_query(test_settings) -> None:
             retriever.retrieve("")
         except ValidationError as exc:
             assert "empty or whitespace only" in str(exc)
-        else:  # pragma: no cover - explicit assertion guard
+        else:  # pragma: no cover
             raise AssertionError("Expected ValidationError for empty query.")
 
 
@@ -95,7 +97,7 @@ def test_retriever_rejects_whitespace_query(test_settings) -> None:
         retriever.retrieve("   ")
     except ValidationError as exc:
         assert "empty or whitespace only" in str(exc)
-    else:  # pragma: no cover - explicit assertion guard
+    else:  # pragma: no cover
         raise AssertionError("Expected ValidationError for whitespace query.")
 
 
@@ -145,7 +147,7 @@ def test_retriever_raises_for_missing_faiss_index(test_settings) -> None:
             retriever.retrieve("router")
         except IndexPersistenceError as exc:
             assert "were not found" in str(exc)
-        else:  # pragma: no cover - explicit assertion guard
+        else:  # pragma: no cover
             raise AssertionError("Expected IndexPersistenceError for missing index.")
 
 
@@ -168,7 +170,7 @@ def test_retriever_raises_for_empty_index(test_settings) -> None:
             retriever.retrieve("router")
         except IndexPersistenceError as exc:
             assert "is empty" in str(exc)
-        else:  # pragma: no cover - explicit assertion guard
+        else:  # pragma: no cover
             raise AssertionError("Expected IndexPersistenceError for empty index.")
 
 
@@ -185,7 +187,7 @@ def test_retriever_detects_query_embedding_dimension_mismatch(test_settings) -> 
             retriever.retrieve("router")
         except IndexPersistenceError as exc:
             assert "similarity search failed" in str(exc).lower()
-        else:  # pragma: no cover - explicit assertion guard
+        else:  # pragma: no cover
             raise AssertionError("Expected IndexPersistenceError for dimension mismatch.")
 
 
@@ -204,3 +206,66 @@ def test_retriever_works_after_restart(test_settings) -> None:
 
     assert first_response.results[0].source_file == "guide.pdf"
     assert second_response.results[0].source_file == "guide.pdf"
+
+
+def test_retriever_reranks_exact_match_chunks_and_populates_diagnostics(test_settings) -> None:
+    retriever = RetrieverService(test_settings)
+    state = {
+        "records": [
+            {
+                "chunk_id": "deep-learning.pdf:131:na:3",
+                "text": "The algorithm may break ties when values are identical.",
+                "metadata": {
+                    "file_name": "deep-learning.pdf",
+                    "source_path": str(test_settings.paths.upload_dir / "deep-learning.pdf"),
+                    "page_number": 131,
+                    "row_number": None,
+                    "chunk_number": 3,
+                    "document_type": "pdf",
+                    "section_title": "Nearest Neighbor",
+                },
+            },
+            {
+                "chunk_id": "Subject Specific Instructions_PNQT.pdf:1:na:1",
+                "text": (
+                    "Advanced Coding Easy | 35\n"
+                    "Breaktime | 1\n"
+                    "Advanced Coding Medium | 55"
+                ),
+                "metadata": {
+                    "file_name": "Subject Specific Instructions_PNQT.pdf",
+                    "source_path": str(
+                        test_settings.paths.upload_dir / "Subject Specific Instructions_PNQT.pdf"
+                    ),
+                    "page_number": 1,
+                    "row_number": None,
+                    "chunk_number": 1,
+                    "document_type": "pdf",
+                    "section_title": "SUBJECT SPECIFIC INSTRUCTIONS",
+                },
+            },
+        ]
+    }
+
+    with patch.object(
+        RetrieverService,
+        "_generate_query_embedding",
+        return_value=np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+    ), patch.object(
+        retriever._vector_store,
+        "search",
+        return_value=(
+            np.asarray([[0.33, 0.19]], dtype=np.float32),
+            np.asarray([[0, 1]], dtype=np.int64),
+            state,
+        ),
+    ):
+        response = retriever.retrieve("Breaktime", top_k=1)
+
+    top_result = response.results[0]
+    assert top_result.source_file == "Subject Specific Instructions_PNQT.pdf"
+    assert top_result.section_title == "SUBJECT SPECIFIC INSTRUCTIONS"
+    assert top_result.rerank_score is not None
+    assert top_result.rerank_score > top_result.score
+    assert top_result.matched_terms == ["breaktime"]
+    assert "matched terms: breaktime" in top_result.selection_reason

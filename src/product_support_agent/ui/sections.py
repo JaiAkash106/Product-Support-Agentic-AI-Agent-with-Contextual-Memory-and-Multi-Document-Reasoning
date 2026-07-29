@@ -235,6 +235,7 @@ def render_rag_section(settings: Settings) -> None:
                 "answer": "",
                 "sources": [],
                 "retrieved_results": [],
+                "selected_results": [],
                 "grounded": False,
                 "reasoning_strategy": "SIMPLE_QA",
                 "graph_nodes_executed": [],

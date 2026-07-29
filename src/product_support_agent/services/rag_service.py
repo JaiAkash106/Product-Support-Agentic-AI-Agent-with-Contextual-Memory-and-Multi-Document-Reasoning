@@ -484,7 +484,8 @@ class RAGService:
         for result in results:
             if result.chunk_id in seen_chunk_ids:
                 continue
-            if result.score < threshold:
+            effective_score = result.rerank_score if result.rerank_score is not None else result.score
+            if effective_score < threshold:
                 continue
             seen_chunk_ids.add(result.chunk_id)
             deduplicated_results.append(result)
@@ -675,12 +676,12 @@ class RAGService:
         return updated_state
 
     def _response_from_state(self, state: RAGGraphState) -> RAGResponse:
-        response_results = state.get("relevant_results") or state.get("retrieved_results", [])
         return RAGResponse(
             query=state["original_query"],
             answer=state.get("generated_answer", ""),
             sources=state.get("citations", []),
-            retrieved_results=list(response_results),
+            retrieved_results=list(state.get("retrieved_results", [])),
+            selected_results=list(state.get("relevant_results", [])),
             grounded=state.get("grounded", False),
             reasoning_strategy=state.get("reasoning_strategy", "SIMPLE_QA"),
             graph_nodes_executed=list(state.get("graph_nodes_executed", [])),

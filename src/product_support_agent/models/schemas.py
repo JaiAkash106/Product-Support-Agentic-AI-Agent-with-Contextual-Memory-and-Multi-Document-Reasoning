@@ -120,6 +120,7 @@ class ChunkMetadata:
     timestamp: str
     page_number: int | None = None
     row_number: int | None = None
+    section_title: str | None = None
     vector_id: int | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -131,6 +132,7 @@ class ChunkMetadata:
             "timestamp": self.timestamp,
             "page_number": self.page_number,
             "row_number": self.row_number,
+            "section_title": self.section_title,
             "vector_id": self.vector_id,
         }
 
@@ -186,6 +188,10 @@ class RetrievalResult:
     chunk_number: int | None
     chunk_id: str
     document_type: str
+    section_title: str | None = None
+    rerank_score: float | None = None
+    matched_terms: list[str] = field(default_factory=list)
+    selection_reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -198,6 +204,10 @@ class RetrievalResult:
             "chunk_number": self.chunk_number,
             "chunk_id": self.chunk_id,
             "document_type": self.document_type,
+            "section_title": self.section_title,
+            "rerank_score": self.rerank_score,
+            "matched_terms": list(self.matched_terms),
+            "selection_reason": self.selection_reason,
         }
 
 
@@ -254,6 +264,7 @@ class RAGResponse:
     sources: list[SourceReference]
     retrieved_results: list[RetrievalResult]
     grounded: bool
+    selected_results: list[RetrievalResult] = field(default_factory=list)
     reasoning_strategy: str = "SIMPLE_QA"
     graph_nodes_executed: list[str] = field(default_factory=list)
     retrieved_chunk_count: int = 0
@@ -272,6 +283,9 @@ class RAGResponse:
             "sources": [source.to_dict() for source in self.sources],
             "retrieved_results": [
                 retrieved_result.to_dict() for retrieved_result in self.retrieved_results
+            ],
+            "selected_results": [
+                selected_result.to_dict() for selected_result in self.selected_results
             ],
             "grounded": self.grounded,
             "reasoning_strategy": self.reasoning_strategy,

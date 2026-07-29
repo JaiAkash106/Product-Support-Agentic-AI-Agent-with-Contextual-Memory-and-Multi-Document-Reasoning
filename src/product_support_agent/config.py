@@ -107,6 +107,10 @@ class AppSettings:
     contextualizer_max_output_tokens: int
     rag_relevance_threshold: float
     rag_context_expansion_chunks: int
+    retrieval_candidate_pool_multiplier: int
+    retrieval_term_overlap_boost: float
+    retrieval_exact_match_boost: float
+    retrieval_section_title_boost: float
     memory_max_turns: int
     llm_provider: str = "gemini"
     ollama_model: str = "qwen3:8b"
@@ -195,6 +199,13 @@ def _build_app() -> AppSettings:
         ),
         rag_relevance_threshold=_get_float("RAG_RELEVANCE_THRESHOLD", 0.35),
         rag_context_expansion_chunks=_get_int("RAG_CONTEXT_EXPANSION_CHUNKS", 2),
+        retrieval_candidate_pool_multiplier=_get_int(
+            "RETRIEVAL_CANDIDATE_POOL_MULTIPLIER",
+            5,
+        ),
+        retrieval_term_overlap_boost=_get_float("RETRIEVAL_TERM_OVERLAP_BOOST", 0.18),
+        retrieval_exact_match_boost=_get_float("RETRIEVAL_EXACT_MATCH_BOOST", 0.12),
+        retrieval_section_title_boost=_get_float("RETRIEVAL_SECTION_TITLE_BOOST", 0.06),
         memory_max_turns=_get_int("MEMORY_MAX_TURNS", 6),
         llm_provider=os.getenv("LLM_PROVIDER", "gemini").strip().lower() or "gemini",
         ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),

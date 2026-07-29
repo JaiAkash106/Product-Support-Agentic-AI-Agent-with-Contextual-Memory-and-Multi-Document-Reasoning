@@ -87,6 +87,10 @@ def test_settings(tmp_path: Path) -> Settings:
             contextualizer_max_output_tokens=512,
             rag_relevance_threshold=0.35,
             rag_context_expansion_chunks=2,
+            retrieval_candidate_pool_multiplier=5,
+            retrieval_term_overlap_boost=0.18,
+            retrieval_exact_match_boost=0.12,
+            retrieval_section_title_boost=0.06,
             memory_max_turns=6,
         ),
     )

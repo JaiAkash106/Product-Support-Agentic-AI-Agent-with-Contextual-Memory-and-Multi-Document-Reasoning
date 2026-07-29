@@ -209,6 +209,10 @@ def _make_result(
     file_name: str = "manual.pdf",
     page_number: int | None = 2,
     chunk_number: int | None = 1,
+    section_title: str | None = None,
+    rerank_score: float | None = None,
+    matched_terms: list[str] | None = None,
+    selection_reason: str = "",
 ) -> RetrievalResult:
     return RetrievalResult(
         content=content,
@@ -220,6 +224,10 @@ def _make_result(
         chunk_number=chunk_number,
         chunk_id=chunk_id,
         document_type="pdf",
+        section_title=section_title,
+        rerank_score=rerank_score,
+        matched_terms=matched_terms or [],
+        selection_reason=selection_reason,
     )
 
 
@@ -306,7 +314,8 @@ def test_rag_service_deduplicates_duplicate_source_references(test_settings) -> 
 
     assert response.grounded is True
     assert len(response.sources) == 1
-    assert len(response.retrieved_results) == 1
+    assert len(response.retrieved_results) == 2
+    assert len(response.selected_results) == 1
 
 
 def test_rag_service_rejects_empty_query(test_settings) -> None:
@@ -471,6 +480,44 @@ def test_rag_service_filters_weak_results_before_generation(test_settings) -> No
     assert response.relevant_chunk_count == 0
     assert "low_relevance_fallback" in response.graph_nodes_executed
     assert not llm_service.calls
+
+
+def test_rag_service_uses_rerank_score_for_relevance_filtering(test_settings) -> None:
+    query = "Which Python version is supported?"
+    retriever = _FakeRetriever(
+        response=_make_response(
+            query,
+            [
+                _make_result(
+                    chunk_id="Subject Specific Instructions_PNQT.pdf:2:na:1",
+                    content="Programming Language | Version\nPython | 3.8.0",
+                    score=0.27,
+                    file_name="Subject Specific Instructions_PNQT.pdf",
+                    section_title="Advanced Coding (Guidelines)",
+                    rerank_score=0.45,
+                    matched_terms=["python", "version"],
+                    selection_reason=(
+                        "semantic similarity 0.2700; matched terms: python, version; "
+                        "section: Advanced Coding (Guidelines)"
+                    ),
+                )
+            ],
+        )
+    )
+    llm_service = _FakeLLMService(answer="Python 3.8.0 is supported.")
+    rag_service = RAGService(
+        test_settings,
+        retriever_service=retriever,
+        llm_service=llm_service,
+    )
+
+    response = rag_service.answer_question(query, top_k=1)
+
+    assert response.grounded is True
+    assert response.answer == "Python 3.8.0 is supported."
+    assert response.retrieved_chunk_count == 1
+    assert response.relevant_chunk_count == 1
+    assert response.selected_results[0].rerank_score == 0.45
 
 
 def test_rag_response_to_dict_includes_phase7_fields() -> None:

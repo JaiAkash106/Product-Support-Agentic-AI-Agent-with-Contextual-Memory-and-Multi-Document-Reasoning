@@ -84,7 +84,13 @@ def _render_latest_sources(last_response: dict[str, object]) -> None:
             st.markdown(f"**Source {index}**  \n{source.get('file_name', 'Unknown file')}")
             st.caption(_build_location_caption_from_source(source))
             if result.get("score") is not None:
-                st.caption(f"Similarity {float(result['score']):.4f}")
+                rerank_score = result.get("rerank_score")
+                if rerank_score is not None:
+                    st.caption(
+                        f"Similarity {float(result['score']):.4f} | Ranked {float(rerank_score):.4f}"
+                    )
+                else:
+                    st.caption(f"Similarity {float(result['score']):.4f}")
             preview = str(result.get("content", "")).strip()
             if preview:
                 st.write(preview[:320] + ("..." if len(preview) > 320 else ""))
@@ -127,9 +133,22 @@ def _render_latest_retrieval(last_response: dict[str, object]) -> None:
                 f"**Result {index}**  \n{result.get('source_file', 'Unknown file')}"
             )
             st.caption(_build_location_caption(result.get("page_number"), result.get("row_number"), result.get("chunk_number")))
+            if result.get("section_title"):
+                st.caption(f"Section {result.get('section_title')}")
             score = result.get("score")
-            if score is not None:
+            rerank_score = result.get("rerank_score")
+            if score is not None and rerank_score is not None:
+                st.caption(
+                    f"Chunk `{result.get('chunk_id', 'N/A')}` | Similarity {float(score):.4f} | Ranked {float(rerank_score):.4f}"
+                )
+            elif score is not None:
                 st.caption(f"Chunk `{result.get('chunk_id', 'N/A')}` | Similarity {float(score):.4f}")
+            matched_terms = result.get("matched_terms") or []
+            if matched_terms:
+                st.caption(f"Matched terms: {', '.join(str(term) for term in matched_terms)}")
+            selection_reason = str(result.get("selection_reason", "")).strip()
+            if selection_reason:
+                st.caption(f"Why selected: {selection_reason}")
             preview = str(result.get("content", "")).strip()
             if preview:
                 st.write(preview[:320] + ("..." if len(preview) > 320 else ""))
