@@ -91,6 +91,7 @@ def test_settings(tmp_path: Path) -> Settings:
             retrieval_term_overlap_boost=0.18,
             retrieval_exact_match_boost=0.12,
             retrieval_section_title_boost=0.06,
+            retrieval_adjacent_chunk_window=1,
             memory_max_turns=6,
         ),
     )

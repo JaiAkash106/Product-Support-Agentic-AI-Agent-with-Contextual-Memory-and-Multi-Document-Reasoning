@@ -269,3 +269,108 @@ def test_retriever_reranks_exact_match_chunks_and_populates_diagnostics(test_set
     assert top_result.rerank_score > top_result.score
     assert top_result.matched_terms == ["breaktime"]
     assert "matched terms: breaktime" in top_result.selection_reason
+
+
+def test_retriever_expands_adjacent_chapter_content_and_deduplicates_headers(
+    test_settings,
+) -> None:
+    retriever = RetrieverService(test_settings)
+    state = {
+        "records": [
+            {
+                "chunk_id": "Deep+Learning+Ian+Goodfellow.pdf:731:na:1",
+                "text": "CHAPTER | 20. | DEEP | GENERATIVE | MODELS",
+                "metadata": {
+                    "file_name": "Deep+Learning+Ian+Goodfellow.pdf",
+                    "source_path": str(
+                        test_settings.paths.upload_dir / "Deep+Learning+Ian+Goodfellow.pdf"
+                    ),
+                    "page_number": 731,
+                    "row_number": None,
+                    "chunk_number": 1,
+                    "document_type": "pdf",
+                    "section_title": None,
+                },
+            },
+            {
+                "chunk_id": "Deep+Learning+Ian+Goodfellow.pdf:731:na:2",
+                "text": (
+                    "Generative models can provide answers to inference problems and "
+                    "learn hierarchical representations of the world."
+                ),
+                "metadata": {
+                    "file_name": "Deep+Learning+Ian+Goodfellow.pdf",
+                    "source_path": str(
+                        test_settings.paths.upload_dir / "Deep+Learning+Ian+Goodfellow.pdf"
+                    ),
+                    "page_number": 731,
+                    "row_number": None,
+                    "chunk_number": 2,
+                    "document_type": "pdf",
+                    "section_title": None,
+                },
+            },
+            {
+                "chunk_id": "Deep+Learning+Ian+Goodfellow.pdf:728:na:1",
+                "text": "CHAPTER | 20. | DEEP | GENERATIVE | MODELS",
+                "metadata": {
+                    "file_name": "Deep+Learning+Ian+Goodfellow.pdf",
+                    "source_path": str(
+                        test_settings.paths.upload_dir / "Deep+Learning+Ian+Goodfellow.pdf"
+                    ),
+                    "page_number": 728,
+                    "row_number": None,
+                    "chunk_number": 1,
+                    "document_type": "pdf",
+                    "section_title": None,
+                },
+            },
+            {
+                "chunk_id": "Deep+Learning+Ian+Goodfellow.pdf:736:na:7",
+                "text": (
+                    "Generative models hold the promise to provide AI systems with a "
+                    "framework for intuitive concepts they need to understand."
+                ),
+                "metadata": {
+                    "file_name": "Deep+Learning+Ian+Goodfellow.pdf",
+                    "source_path": str(
+                        test_settings.paths.upload_dir / "Deep+Learning+Ian+Goodfellow.pdf"
+                    ),
+                    "page_number": 736,
+                    "row_number": None,
+                    "chunk_number": 7,
+                    "document_type": "pdf",
+                    "section_title": None,
+                },
+            },
+        ]
+    }
+
+    with patch.object(
+        RetrieverService,
+        "_generate_query_embedding",
+        return_value=np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+    ), patch.object(
+        retriever._vector_store,
+        "search",
+        return_value=(
+            np.asarray([[0.80, 0.79, 0.74]], dtype=np.float32),
+            np.asarray([[0, 2, 3]], dtype=np.int64),
+            state,
+        ),
+    ):
+        response = retriever.retrieve(
+            "Give me three important points from the Deep Generative Models chapter",
+            top_k=3,
+        )
+
+    assert len(response.results) == 3
+    assert response.results[0].chunk_id == "Deep+Learning+Ian+Goodfellow.pdf:736:na:7"
+    assert sum(
+        1 for result in response.results if result.content == "CHAPTER | 20. | DEEP | GENERATIVE | MODELS"
+    ) == 1
+    assert any(
+        result.chunk_id == "Deep+Learning+Ian+Goodfellow.pdf:731:na:2"
+        and "adjacent chunk expansion" in result.selection_reason
+        for result in response.results
+    )

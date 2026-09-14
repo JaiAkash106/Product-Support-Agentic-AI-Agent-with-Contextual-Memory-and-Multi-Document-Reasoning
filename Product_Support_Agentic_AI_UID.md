@@ -1,256 +1,289 @@
 # Product Support Agentic AI Agent with Contextual Memory and Multi-Document Reasoning
-## User Interface Design (UID) Document
+## User Interface Design (UID)
+
+## Title Page
+
+| Field | Value |
+|---|---|
+| Document Title | Product Support Agentic AI Agent with Contextual Memory and Multi-Document Reasoning - UID |
+| Document ID | HCL-PSAAI-UID-001 |
+| Version | 1.1 |
+| Date | 2026-08-19 |
+| Author | Codex Documentation Review |
+| Company | HCL |
+| Source Document | `Product_Support_Agentic_AI_Enterprise_Documentation.docx` |
 
 ## Revision History
 
 | Version No | Date | Prepared by / Modified by | Significant Changes |
 |---|---|---|---|
 | 1.0 | 2026-06-13 | Senior UX Architect | Initial User Interface Design specification and Streamlit layout blueprint |
+| 1.1 | 2026-08-19 | Codex Documentation Review | Reviewed and aligned the UID to the current Streamlit interface and interaction behavior |
 
----
+## Table of Contents
 
-## 1 Overview
+1. Overview  
+2. User Personas and Primary Tasks  
+3. Information Architecture  
+4. Visual Design System  
+5. Ask AI Experience  
+6. Ingestion Experience  
+7. Sidebar and Developer Tools  
+8. Feedback, Error States, and Empty States  
+9. Accessibility and Responsiveness  
+10. Documentation Consistency Notes  
+11. References  
 
-### 1.1 Purpose
+## 1. Overview
 
-This document defines the User Interface Design (UID) and User Experience (UX) specifications for the **Product Support Agentic AI Agent**. It serves as the design blueprint for developers, product managers, and QA engineers. The goals of this document are to:
-- Establish consistent layout grids, color palettes, and typographic hierarchies.
-- Document user characteristics, personas, and navigation pathways.
-- Define Streamlit-specific UI elements and state configurations.
-- Detail usability, accessibility, and error presentation frameworks.
+This document describes the current user interface and user interaction behavior of the Streamlit application. It reflects the implemented UI in the repository rather than earlier prototype concepts.
 
-### 1.2 Scope
+## 2. User Personas and Primary Tasks
 
-The scope of this UI design covers all interactive elements of the Streamlit application:
-- **Workspace Navigation**: Selection of view modes (e.g., Support Assistant, Document Administrator, System Configuration).
-- **Document Ingestion Interface**: File upload, validation feedback, and indexing status indicators.
-- **Support Chat Interface**: Chat messages, typing states, and history scroll.
-- **Context & Citation Panel**: Grounding evidence, interactive source citations, and document metadata previewers.
-- **Administrative Panels**: Prompt configuration, temperature controls, and system log monitors.
+### 2.1 Support User
 
-### 1.3 Brief Description of Product
+- asks grounded questions about uploaded documents
+- reviews assistant answers and citations
+- continues a follow-up conversation in the same session
 
-The **Product Support Agentic AI Agent** is an internal support acceleration tool. It allows product specialists to upload and index technical manuals, product release notes, and structured data tables. The application enables users to run semantic searches and generate natural language answers with source-grounded citations. By using a local Sentence Transformers embedding model and a local FAISS index, the tool provides high-speed contextual retrieval. The Streamlit-based UI organizes these capabilities into an intuitive workspace.
+### 2.2 Knowledge Administrator
 
----
+- uploads supported files
+- builds the knowledge base
+- reviews indexed document cards
+- clears the knowledge base when needed
 
-## 2 Design User Interface
+### 2.3 Developer / Reviewer
 
-### 2.1 User Characteristics
+- inspects retrieval details
+- checks source citations and metadata
+- reviews debug information from the latest answer
 
-The application has three primary classes of users, described in the personas below:
+## 3. Information Architecture
 
-#### Persona 1: Sarah – Senior Customer Support Specialist
-* **Role**: Primary user of the chat interface. Responds to customer tickets and troubleshooting inquiries.
-* **Context**: Under pressure to resolve tickets within a tight SLA. Requires immediate, highly accurate answers with direct citations.
-* **UX Needs**: High-contrast text, clear evidence trails, fast response loading, and copy-to-clipboard functionality for answers.
+### 3.1 Primary Navigation
 
-#### Persona 2: Dave – Knowledge Administrator
-* **Role**: Primary user of the document management and upload panel.
-* **Context**: Maintains product manuals, updating files as new releases occur.
-* **UX Needs**: Clear drag-and-drop zones, file size/type warnings, index refresh status indicators, and a clean file deletion list.
+The current UI exposes two primary top-level destinations through a segmented control:
 
-#### Persona 3: Alex – IT Support Engineer
-* **Role**: Configures prompt templates and monitors model settings.
-* **Context**: Adjusts temperature parameters and system instructions to tune response quality.
-* **UX Needs**: Structured input text areas for prompt templates, numeric sliders for LLM parameters, and structured event log views.
+- `Ask AI`
+- `Ingestion`
 
----
+### 3.2 Persistent Sidebar
 
-### 2.2 Primary User Interface Elements
+The sidebar is always visible and contains:
 
-The UI is divided into three functional regions:
+- product title
+- workspace summary
+- AI status
+- conversation controls
+- developer tools
 
-```
-+-----------------------------------------------------------------------------+
-|  LOGO & TITLE                             [Status: API connected / Offline] |
-+-----------------------------------+-----------------------------------------+
-|                                   |                                         |
-|  SIDEBAR                          |  MAIN WORKSPACE                         |
-|  +-----------------------------+  |  +-----------------------------------+  |
-|  | VIEW SELECTION              |  |  |                                   |  |
-|  | [o] Chat Assistant          |  |  |  CHAT DIALOGUE & RESPONSE AREA    |  |
-|  | [ ] Ingest Manager          |  |  |                                   |  |
-|  | [ ] System Settings         |  |  |                                   |  |
-|  +-----------------------------+  |  +-----------------------------------+  |
-|  | INDEXED DOCUMENTS           |  |  |                                   |  |
-|  | - User_Manual_V1.pdf        |  |  |  QUERY INPUT MASK                 |  |
-|  | - Release_Notes.txt         |  |  |  [ Ask a question...            ] |  |
-|  | - Pricing_Table.csv         |  |  |                                   |  |
-|  +-----------------------------+  |  +-----------------------------------+  |
-|                                   |                                         |
-+-----------------------------------+-----------------------------------------+
-```
+### 3.3 Main Content Zones
 
-1. **Sidebar Controls (Global Context)**: Holds the navigation buttons (App Mode), indexing indicators, and a summary list of currently active knowledge documents.
-2. **Main Workspace (Interactive Content)**:
-   - **Assistant Mode**: Multi-turn chat interface with user/assistant bubbles and citations.
-   - **Ingest Manager Mode**: Drag-and-drop upload workspace and data registry table.
-   - **System Settings Mode**: Configuration sliders, prompt editing text areas, and log viewers.
-3. **Floating/Collapsible Citation Drawer (Context Overlay)**: Renders side-by-side or as expandable markdown sections below the LLM responses, showing exact source matches.
+The main area contains:
 
----
+1. shell header
+2. summary metric cards
+3. primary navigation
+4. current page content (`Ask AI` or `Ingestion`)
 
-### 2.3 Define Navigation Map
+## 4. Visual Design System
 
-The screen flow below outlines how users navigate between states in the Streamlit application:
+### 4.1 Theme
 
-```mermaid
-graph TD
-    Start([Launch Streamlit App]) --> LoadEnv{Check API Key}
-    LoadEnv -->|Missing Key| RequestKey[Render API Key Overlay]
-    LoadEnv -->|Key Present| LoadConfig[Load settings.yaml]
-    
-    LoadConfig --> RenderMain[Render Main Screen]
-    
-    RenderMain --> Sidebar[Sidebar Mode Selector]
-    
-    Sidebar -->|Select Assistant| ScreenChat[Render Chat Interface]
-    Sidebar -->|Select Ingestion| ScreenIngest[Render Upload & File Manager]
-    Sidebar -->|Select Settings| ScreenSettings[Render Prompt & LLM Controls]
-    
-    ScreenChat --> SubmitQuery[User enters query]
-    SubmitQuery --> CheckRetrieval{Retrieve FAISS Chunks}
-    CheckRetrieval -->|No chunks| ShowWarning[Show No Evidence Warning]
-    CheckRetrieval -->|Chunks found| RunLLM[Call Gemini API]
-    RunLLM --> RenderResponse[Render Answer with Citations]
-    
-    ScreenIngest --> UploadFiles[Drag & Drop Files]
-    UploadFiles --> Validate{Validate Type & Size}
-    Validate -->|Invalid| ShowError[Show Error Alert]
-    Validate -->|Valid| TriggerEmbed[Trigger Ingestion & FAISS Index Build]
-    TriggerEmbed --> ShowStatus[Render Progress Bar]
-    ShowStatus --> RefreshIndex[Refresh Document Registry Table]
-```
+The implemented UI uses a dark enterprise theme with:
 
----
+- deep blue/black background gradients
+- blue accent color
+- soft green connected-state accents
+- rounded cards and rounded message bubbles
+- subdued borders and shadows
 
-### 2.4 User Interface Design Elements
+### 4.2 Typography and Layout Style
 
-#### Color Palette (Dark Theme / Glassmorphism)
-The design prioritizes a high-contrast dark theme optimized for technical support personnel working extended shifts.
+The current design emphasizes:
 
-* **Primary Background**: HSL(222, 19%, 12%) - Deep dark slate.
-* **Secondary Card/Sidebar**: HSL(222, 19%, 16%) - Lightened slate.
-* **Primary Accent (Brand)**: HSL(210, 100%, 66%) - Bright cobalt blue.
-* **Success Accent (Active status)**: HSL(145, 63%, 42%) - Soft emerald green.
-* **Warning/Alert Accent**: HSL(10, 80%, 55%) - Warm amber red.
-* **Text - Primary**: HSL(210, 20%, 98%) - Crisp off-white.
-* **Text - Secondary/Muted**: HSL(210, 15%, 75%) - Muted steel gray.
+- large product heading
+- compact metrics
+- high-contrast content surfaces
+- wide chat workspace
+- separated developer details outside the main chat stream
 
-#### Typography
-* **Primary Font**: `Inter`, sans-serif (clean sans-serif for UI layout, labels, and text fields).
-* **Secondary Font**: `Roboto Mono`, monospace (used for source citations, log displays, metadata statistics, and code snippets).
-* **Hierarchy**:
-  - `H1`: 32px, Semibold, primary text (App Title)
-  - `H2`: 24px, Medium, primary text (Section Headings)
-  - `H3/Sidebar Header`: 16px, Semibold, primary text
-  - `Body Text`: 14px, Regular, secondary text
-  - `Captions/Metadata`: 11px, Regular, secondary muted
+### 4.3 Message Presentation
 
----
+Conversation messages are rendered as custom HTML/CSS bubbles through Streamlit markdown:
 
-### 2.5 User Interface Prototype
+- user messages are right-aligned
+- assistant messages are left-aligned
+- timestamps appear inside bubbles when available
 
-#### 2.5.1 Design the User Interface Prototype
+## 5. Ask AI Experience
 
-##### UI Page 1: Support Assistant Workspace
-* **Layout**: Left sidebar (navigation and active index stats) occupies 25% width. Main panel occupies 75% width.
-* **Chat Elements**: User chat entries are styled with a secondary background card shifted to the right, and the Assistant chat entries are aligned left with a primary accent border.
-* **Citations**: Renders beneath each assistant response using an expandable accordion (`st.expander`) with a book icon. Inside, citations are organized in tabs: `Tab 1: Citation 1 (Source File)`, `Tab 2: Citation 2 (Source File)`. Each tab lists the page number, similarity score (%), and exact text snippet.
+### 5.1 Primary Goal
 
-##### UI Page 2: Document Ingest Manager
-* **Drag-and-Drop Area**: Centered dotted-border box styled with a file-upload icon. Displays "Drag and drop PDF, TXT, or CSV here (Max 50MB per file)".
-* **Progress Bar**: Underneath the file uploader. Displays dynamic states: "Parsing text...", "Generating embeddings...", "Saving FAISS Index...".
-* **Document Registry Table**: Grid layout (`st.dataframe`) detailing:
-  - Document Name | File Type | Chunks | Status (Indexed / Failed) | Action (Delete Button)
+The `Ask AI` view is the main usage path and is designed to keep the conversation visually clean.
 
-##### UI Page 3: System Settings & Log Monitor
-* **Model Configuration**: Columns of sliders for LLM settings (`Temperature`, `Top-P`, `Max Tokens`).
-* **Prompt Manager**: Multi-line text area showing the default RAG template, permitting operators to change the instruction set.
-* **Log Monitor**: High-contrast code-block (`st.code`) with a max height of 400px and a scrollbar, displaying structured logs in reverse chronological order.
+### 5.2 Screen Elements
 
----
+The current `Ask AI` experience includes:
 
-#### 2.5.2 Implement the User Interface Prototype
+- a bordered conversation container
+- an empty-state guidance message when no conversation exists
+- a text area for question entry
+- a primary `Send` button
 
-The Streamlit UI prototype will be organized using the following structural layout layout:
+### 5.3 Conversation Behavior
 
-```python
-import streamlit as st
+The rendered conversation follows this vertical order:
 
-# 1. Page Configuration (Title, Icon, Layout)
-st.set_page_config(
-    page_title="Agentic Support Assistant",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+`User question -> Assistant answer -> Next user question -> Next assistant answer`
 
-# 2. Apply Custom CSS (Color Palette, Typography, Glassmorphism Cards)
-st.markdown("""
-    <style>
-    .reportview-container {
-        background-color: #121620;
-    }
-    .sidebar .sidebar-content {
-        background-color: #1a1f2c;
-    }
-    .stChatInput {
-        border-color: #3b82f6;
-    }
-    .citation-card {
-        border-left: 3px solid #3b82f6;
-        padding-left: 10px;
-        margin-bottom: 8px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+The current implementation stores a UI transcript in Streamlit session state so previous turns can be re-rendered immediately.
 
-# 3. Sidebar Navigation & Active Index Summary
-with st.sidebar:
-    st.title("🤖 Support Agent")
-    app_mode = st.radio("Navigation", ["Support Assistant", "Ingest Manager", "System Settings"])
-    
-    st.markdown("---")
-    st.subheader("📚 Active Knowledge Base")
-    # Displays dynamic list of indexed files and status
-    st.info("FAISS Vector Index: Loaded (3 Files, 1,240 Chunks)")
+### 5.4 Search Depth
 
-# 4. View Mode Routing
-if app_mode == "Support Assistant":
-    st.header("💬 AI Support Assistant")
-    # Render Chat Workspace (st.chat_message)
-    # Render Citations inside st.expander
-    # Render Input box at bottom (st.chat_input)
+Search depth is controlled from the sidebar through a slider labeled `Search Depth` with a range of `1` to `20`.
 
-elif app_mode == "Ingest Manager":
-    st.header("📂 Document Ingestion Workspace")
-    # File Uploader (st.file_uploader)
-    # Progress indicators (st.progress)
-    # Document registry (st.dataframe)
+### 5.5 Grounded Answer UX
 
-elif app_mode == "System Settings":
-    st.header("⚙️ Prompt & Engine Configuration")
-    # Parameter sliders
-    # Template text_area
-```
+The assistant does not present itself as a general-purpose chat model. The user-facing expectation is:
 
----
+- answers come from uploaded documents
+- citations are attached to the latest interaction through developer tools
+- insufficient evidence produces a safe fallback instead of an invented answer
 
-#### 2.5.3 Prototype Feedback
+## 6. Ingestion Experience
 
-##### Error Messages and Visual Banners
-* **API Connection Failure**: A red banner (`st.error`) at the top of the main screen: *"Error: Unable to connect to Gemini LLM API. Check your internet connection and API key configuration."*
-* **File Upload Violations**: An warning box (`st.warning`) beneath the drag-and-drop zone: *"File size exceeds 50MB. Upload failed."* or *"Invalid format: Only .pdf, .txt, and .csv files are supported."*
-* **Retrieval Silence**: A yellow notice (`st.info`) when similarity results fall below threshold: *"No matching documentation found. The assistant will answer using general training memory if permitted, or state insufficient context."*
+### 6.1 Upload Workflow
 
-##### Accessibility Considerations (A11y)
-* **Keyboard Navigation**: Streamlit components natively support standard tab and enter key navigation. Input boxes automatically receive cursor focus upon page load.
-* **Screen Reader Compatibility**: Text fields, file managers, and tables must use descriptive, unique labels rather than plain icons.
-* **Color Contrast**: Main text has a contrast ratio of >7:1 against background slates to meet WCAG 2.1 AA requirements.
+The `Ingestion` page includes:
 
-##### Responsive Design Considerations
-* **Mobile Layout**: Sidebar automatically collapses into a burger menu on screen widths below 768px.
-* **Grid Reflow**: Columns reflow into a single stacked vertical card layout on tablet/mobile views.
-* **Table Scroll**: Large data tables are rendered with horizontal and vertical overflow scrollbars to prevent UI clipping.
+- a `Choose files` uploader
+- support for multiple files at once
+- pre-ingestion cards for pending uploads
+- a `Build Knowledge Base` primary action
+- a `Clear Knowledge Base` secondary action
+
+### 6.2 Knowledge Base Summary
+
+After a successful ingestion run, the page shows summary cards for:
+
+- uploaded files
+- extracted documents
+- chunks created
+- vectors in index
+
+### 6.3 Indexed Document Presentation
+
+Indexed files are shown as reusable cards under `Knowledge Base`, with:
+
+- document icon by type
+- stored file name
+- file size
+- indexed caption with chunk count
+
+## 7. Sidebar and Developer Tools
+
+### 7.1 Workspace Section
+
+The sidebar workspace section shows:
+
+- `Documents`
+- `Chunks`
+- `Last Updated`
+
+### 7.2 AI Status Section
+
+The sidebar AI status section shows:
+
+- provider label
+- model name
+- connection status
+
+The current local environment resolves to an `Ollama` provider with model `qwen3:8b`, while the code can also support `Gemini`.
+
+### 7.3 Conversation Section
+
+The sidebar conversation section shows:
+
+- assistant turn count
+- search depth slider
+- clear conversation button
+
+### 7.4 Developer Tools Section
+
+Developer tools are intentionally collapsed behind a sidebar expander and include the latest interaction's:
+
+- sources
+- debug information
+- retrieval details
+- metadata snapshot
+
+This keeps technical details out of the primary chat flow.
+
+## 8. Feedback, Error States, and Empty States
+
+### 8.1 Empty States
+
+Implemented empty states include:
+
+- no conversation yet
+- no latest answer details in developer tools
+- no sources available for the latest answer
+- no retrieval details available
+
+### 8.2 Success Feedback
+
+Implemented success feedback includes:
+
+- knowledge base update success
+- knowledge base clear success
+
+### 8.3 Error and Warning Feedback
+
+Implemented user-facing error/warning patterns include:
+
+- warning when building without selecting files
+- ingestion errors displayed through Streamlit alerts
+- provider or retrieval errors surfaced through assistant response state and debug details
+
+### 8.4 Fallback Messaging
+
+When grounded generation cannot proceed because evidence is insufficient, the UI presents the system fallback response returned by the backend rather than a speculative answer.
+
+## 9. Accessibility and Responsiveness
+
+### 9.1 Accessibility
+
+The UI uses:
+
+- visible headings and labels
+- strong text/background contrast
+- button and form semantics provided by Streamlit
+
+Formal WCAG audit results are not present in the repository and are therefore unspecified.
+
+### 9.2 Responsiveness
+
+The custom theme includes layout behavior for narrower screens, including:
+
+- card wrapping
+- bubble width adjustments
+- preserved sidebar layout behavior through Streamlit
+
+Detailed mobile usability validation is not documented in the repository and is therefore unspecified.
+
+## 10. Documentation Consistency Notes
+
+- This reviewed UID reflects the current premium dark Streamlit interface rather than the older three-mode prototype (`Support Assistant`, `Ingest Manager`, `System Settings`).
+- Prompt editing, `Top-P`, and `Top-K` runtime controls are not exposed in the current UI and are therefore not described as active interface features.
+- Developer details are shown in a single sidebar `Developer Tools` section rather than interrupting the conversation after every answer.
+- The current UX is grounded-document-first; it does not instruct users that the assistant may answer from general training memory.
+
+## 11. References
+
+1. [layout.py](file:///D:/hcl/src/product_support_agent/ui/layout.py)
+2. [sections.py](file:///D:/hcl/src/product_support_agent/ui/sections.py)
+3. [sidebar.py](file:///D:/hcl/src/product_support_agent/ui/sidebar.py)
+4. [theme.py](file:///D:/hcl/src/product_support_agent/ui/theme.py)
+5. [presenter.py](file:///D:/hcl/src/product_support_agent/ui/presenter.py)

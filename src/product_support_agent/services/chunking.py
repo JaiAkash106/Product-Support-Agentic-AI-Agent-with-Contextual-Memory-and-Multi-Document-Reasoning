@@ -152,7 +152,7 @@ class ChunkingService:
 
             if self._looks_like_heading(line):
                 flush_current_block()
-                current_section_title = line.rstrip(":").strip() or current_section_title
+                current_section_title = self._normalize_heading(line) or current_section_title
                 continue
 
             line_kind = self._classify_line(line)
@@ -190,8 +190,21 @@ class ChunkingService:
 
     @staticmethod
     def _looks_like_heading(line: str) -> bool:
-        if line.startswith("\u2022") or " | " in line:
+        if line.startswith("\u2022"):
             return False
+
+        if " | " in line:
+            normalized_line = ChunkingService._normalize_heading(line)
+            if not normalized_line:
+                return False
+            alpha_characters = [character for character in normalized_line if character.isalpha()]
+            if not alpha_characters:
+                return False
+
+            uppercase_ratio = sum(character.isupper() for character in alpha_characters) / len(
+                alpha_characters
+            )
+            return uppercase_ratio >= 0.70 and len(normalized_line.split()) <= 10
 
         if line.endswith(":") and len(line) <= 120:
             return True
@@ -204,6 +217,12 @@ class ChunkingService:
             alpha_characters
         )
         return uppercase_ratio >= 0.75 and len(line.split()) <= 8
+
+    @staticmethod
+    def _normalize_heading(line: str) -> str:
+        if " | " not in line:
+            return line.rstrip(":").strip()
+        return " ".join(part.strip() for part in line.split("|") if part.strip()).rstrip(":").strip()
 
     @staticmethod
     def _merge_block_lines(lines: list[str], kind: str) -> str:

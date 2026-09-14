@@ -111,6 +111,7 @@ class AppSettings:
     retrieval_term_overlap_boost: float
     retrieval_exact_match_boost: float
     retrieval_section_title_boost: float
+    retrieval_adjacent_chunk_window: int
     memory_max_turns: int
     llm_provider: str = "gemini"
     ollama_model: str = "qwen3:8b"
@@ -206,6 +207,7 @@ def _build_app() -> AppSettings:
         retrieval_term_overlap_boost=_get_float("RETRIEVAL_TERM_OVERLAP_BOOST", 0.18),
         retrieval_exact_match_boost=_get_float("RETRIEVAL_EXACT_MATCH_BOOST", 0.12),
         retrieval_section_title_boost=_get_float("RETRIEVAL_SECTION_TITLE_BOOST", 0.06),
+        retrieval_adjacent_chunk_window=_get_int("RETRIEVAL_ADJACENT_CHUNK_WINDOW", 1),
         memory_max_turns=_get_int("MEMORY_MAX_TURNS", 6),
         llm_provider=os.getenv("LLM_PROVIDER", "gemini").strip().lower() or "gemini",
         ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),

@@ -51,3 +51,30 @@ def test_chunking_service_keeps_table_rows_and_section_titles_together(test_sett
     assert "Python | 3.8.0" in table_chunk.text
     assert table_chunk.metadata.section_title == "ADVANCED CODING (GUIDELINES)"
     assert table_chunk.metadata.page_number == 2
+
+
+def test_chunking_service_treats_pipe_delimited_chapter_headers_as_section_titles(
+    test_settings,
+) -> None:
+    tuned_settings = replace(
+        test_settings,
+        app=replace(test_settings.app, chunk_size=320, chunk_overlap=0),
+    )
+    document = ExtractedDocument(
+        file_name="deep-learning.pdf",
+        document_type="pdf",
+        source_path=test_settings.paths.upload_dir / "deep-learning.pdf",
+        page_number=731,
+        text=(
+            "CHAPTER | 20. | DEEP | GENERATIVE | MODELS\n"
+            "Generative models can provide answers to inference problems.\n"
+            "They also learn hierarchical representations of the world.\n"
+        ),
+    )
+
+    chunks = ChunkingService(tuned_settings).chunk_documents([document])
+
+    assert len(chunks) == 1
+    assert chunks[0].metadata.section_title == "CHAPTER 20. DEEP GENERATIVE MODELS"
+    assert "CHAPTER | 20." not in chunks[0].text
+    assert "Generative models can provide answers" in chunks[0].text
